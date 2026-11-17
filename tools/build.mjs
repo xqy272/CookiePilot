@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 const base=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const read=name=>fs.readFile(path.join(base,name),'utf8');
+const read=async name=>(await fs.readFile(path.join(base,name),'utf8')).replace(/\r\n/g,'\n');
 const write=async(name,text)=>{await fs.mkdir(path.dirname(path.join(base,name)),{recursive:true});await fs.writeFile(path.join(base,name),text);};
 const pkg=JSON.parse(await read('package.json')),version=pkg.version;
 const [core,engine,app,style]=await Promise.all(['src/core.js','src/engine.js','src/app.js','src/styles.css'].map(read));
