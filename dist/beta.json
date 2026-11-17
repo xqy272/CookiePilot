@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "version": "2.0.0",
+  "channel": "beta",
+  "gameVersions": [
+    "2.058"
+  ],
+  "notes": "测试频道当前与稳定版一致。全新工作台；建筑与升级采购；花园培育、条件施法、独立预测、万神殿、股市、成长、备份与在线更新。",
+  "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/beta.user.js",
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.0.0/CookiePilot-v2.0.0.zip",
+  "sha256": "8dc0e74ede8cc8297c1eef962df2c7025a046c1a022f1f31926d483d00ae108a"
+}

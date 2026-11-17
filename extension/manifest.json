@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Cookie Pilot · 饼干领航员",
+  "version": "2.0.0",
+  "description": "Cookie Clicker 全流程中文助手：现代工作台、花园、魔法、股市、自动采购与备份。",
+  "minimum_chrome_version": "111",
+  "permissions": [
+    "declarativeNetRequest"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "Cookie Pilot · 广告请求拦截",
+    "default_popup": "popup.html",
+    "default_icon": "icon48.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://orteil.dashnet.org/cookieclicker/",
+        "*://orteil.dashnet.org/cookieclicker/index.html"
+      ],
+      "js": [
+        "pilot.bundle.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "cookie_pilot_ads",
+        "enabled": true,
+        "path": "ad-rules.json"
+      }
+    ]
+  }
+}

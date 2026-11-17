@@ -1,0 +1,7 @@
+[
+  {"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||googlesyndication.com^","initiatorDomains":["orteil.dashnet.org"],"resourceTypes":["script","image","sub_frame","xmlhttprequest","ping","other"]}},
+  {"id":2,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||doubleclick.net^","initiatorDomains":["orteil.dashnet.org"],"resourceTypes":["script","image","sub_frame","xmlhttprequest","ping","other"]}},
+  {"id":3,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||googleadservices.com^","initiatorDomains":["orteil.dashnet.org"],"resourceTypes":["script","image","sub_frame","xmlhttprequest","ping","other"]}},
+  {"id":4,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||serve.app.playsaurus.com^","initiatorDomains":["orteil.dashnet.org"],"resourceTypes":["script","image","sub_frame","xmlhttprequest","ping","other"]}},
+  {"id":5,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||orteil.dashnet.org/cookieclicker/showads.js","initiatorDomains":["orteil.dashnet.org"],"resourceTypes":["script"]}}
+]

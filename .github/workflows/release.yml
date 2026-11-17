@@ -1,0 +1,29 @@
+name: Publish release archive
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run check && npm test && npm run build
+      - name: Verify tag and version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "if ('v'+require('./package.json').version!==process.env.RELEASE_TAG) process.exit(1)"
+      - name: Package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: zip -r "CookiePilot-${RELEASE_TAG}.zip" extension dist src tools tests package.json README.md CHANGELOG.md LICENSE CookiePilot.user.js 开始使用.html 界面预览.html 验证报告.md
+      - name: Publish versioned assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" "CookiePilot-${RELEASE_TAG}.zip" CookiePilot.user.js --title "Cookie Pilot $RELEASE_TAG" --notes-file CHANGELOG.md
