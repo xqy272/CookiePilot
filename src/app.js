@@ -47,7 +47,7 @@ const media=window.matchMedia('(prefers-color-scheme: light)');
 function theme(){const mode=engine.c.theme==='system'?(media.matches?'light':'dark'):engine.c.theme;for(const h of [host,entryHost])h.dataset.theme=mode;host.dataset.density=engine.c.density;if(engine.c.ads&&!adStyle.isConnected)(document.head||document.documentElement).append(adStyle);if(!engine.c.ads)adStyle.remove();}
 media.addEventListener('change',theme);
 const tag=(s,cls='')=>`<span class="tag ${cls}">${esc(s)}</span>`;
-const btn=(text,action,arg='',cls='')=>`<button type="button" class="${cls}" data-action="${action}" data-arg="${esc(arg)}">${text}</button>`;
+const btn=(text,action,arg='',cls='',disabled=false)=>`<button type="button" class="${cls}" data-action="${action}" data-arg="${esc(arg)}"${disabled?' disabled':''}>${text}</button>`;
 const head=(title,sub,extra='')=>`<div class="heading"><div><h2>${title}</h2><p>${sub}</p></div>${extra}</div>`;
 const note=s=>`<p class="note">${s}</p>`;
 const block=(title,body,hint='')=>`<section class="block"><div class="block-head"><h3>${title}</h3><span>${hint}</span></div>${body}</section>`;
@@ -86,7 +86,7 @@ const stamp=at=>new Date(at).toISOString().replace(/[:.]/g,'-');
 const safeLink=value=>{try{const u=new URL(value);return u.protocol==='https:'&&!u.username&&!u.password?u.href:'';}catch{return'';}};
 async function checkUpdate(){if(checking)return;checking=true;updateText='正在检查…';render();try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);let response;try{response=await fetch(engine.c.releaseBase+'/'+engine.c.updateChannel+'.json',{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});}finally{clearTimeout(timeout);}if(!response.ok)throw Error('HTTP '+response.status);const text=await response.text();if(text.length>100000)throw Error('更新清单过大');const data=JSON.parse(text);C.semver(data.version);if(!Array.isArray(data.gameVersions)||typeof data.notes!=='string'||!safeLink(data.userscript)||!safeLink(data.zip))throw Error('更新清单格式不正确');const available=C.newer(data.version,C.VERSION);update=available?data:null;updateText=available?'有新版本 '+data.version:'已安装 '+C.VERSION+' · 发布频道 '+data.version;checkingAt=Date.now();}catch(e){update=null;updateText='暂时无法检查：'+e.message+'；当前版本继续使用';}finally{checking=false;if(page==='settings')render();}}
 function buffs(g){const list=Object.values(g.buffs||{});return list.length?`<div class="chips">${list.map(b=>`<span class="chip">${esc(b.dname||b.name)} · ${T(b.time/(g.fps||30))}</span>`).join('')}</div>`:note('当前没有临时增益。');}
-function gardenPage(g,c){const info=C.garden(g);if(!info)return head('花园','生长、突变与收获。')+empty('花园尚未解锁','将农场升至 1 级，解锁后此处会读取真实花园。')+btn('查看糖块规划','plan-tab','lumps');const{m,cells}=info,selected=cells.find(t=>t.key===selectedTile);let html=head('花园',`${m.plantsUnlockedN} / ${m.plantsN} 种子 · 下次生长 ${m.freeze?'已冻结':T(info.next)}`,tag(m.freeze?'冻结中':'正在生长',m.freeze?'':'good'));
+function gardenPage(g,c){const info=C.garden(g);if(!info)return head('花园','生长、突变与收获。')+empty('花园尚未解锁','将农场升至 1 级，解锁后此处会读取真实花园。')+btn('规划解锁花园','plan-unlock','Farm');const{m,cells}=info,selected=cells.find(t=>t.key===selectedTile);let html=head('花园',`${m.plantsUnlockedN} / ${m.plantsN} 种子 · 下次生长 ${m.freeze?'已冻结':T(info.next)}`,tag(m.freeze?'冻结中':'正在生长',m.freeze?'':'good'));
  html+=`<div class="cols"><div><div class="garden" aria-label="真实花园">${cells.map(t=>`<button type="button" data-action="tile" data-arg="${t.key}" class="tile ${t.mature?'mature':''} ${t.key===selectedTile?'selected':''} ${c.protectedTiles.includes(t.key)?'protected':''}" ${!t.unlocked?'disabled':''} aria-label="${t.x+1},${t.y+1} ${esc(t.p?.name||'空地')}" title="${esc(t.p?.name||'空地')}"><span class="symbol">${t.p?'♧':'·'}</span><span class="plant-label">${esc(t.p?.name||'')}</span></button>`).join('')}</div><div class="tile-info">${selected?.p?`<strong>${esc(selected.p.name)}</strong><p class="note">年龄 ${F(selected.age)}% · 成熟 ${selected.p.mature}%<br>预计成熟 ${T(selected.eta)} · 枯萎 ${T(selected.death)}</p>`:'<span class="muted">选择格子查看植物或突变机会。</span>'}</div><div class="actions">${btn(c.protectedTiles.includes(selectedTile)?'取消格子保护':'保护此格','protect-tile',selectedTile)}${selected?.p?btn('收获此格','harvest-tile',selectedTile):''}${btn(m.freeze?'解冻花园':'冻结花园','freeze')}</div></div><div><h3>此格邻居的突变机会</h3>${selected&&!selected.p?C.mutations(g,selected.x,selected.y).map(x=>row('leaf',esc(x.name),'基础每次尝试概率；尚未计入土壤额外尝试',tag(F(x.chance*100,3)+'%'))).join('')||note('相邻植物尚不满足突变条件。'):note('突变需要空格；选择空地查看当前成熟邻居能够产生的结果。')}<div class="warning">生长时间是统计估算。点选格子上的保护标记会阻止助手收获和补种；不阻止游戏自然枯萎。</div></div></div>`;
  html+='<div class="actions">'+btn('收获规则','open-rule','harvest')+btn('补种规则','open-rule','plant')+'</div>';
  html+=block('种子收藏',`<div class="collection">${m.plantsById.map(p=>`<span class="${p.unlocked?'owned':''}">${p.unlocked?'✓ ':''}${esc(p.name)}</span>`).join('')}</div>`);return html;}
@@ -133,12 +133,12 @@ const groups=[
  {id:'market',name:'股市',icon:'market',rules:['trade'],analysis:'market',link:'行情与持仓'},
  {id:'growth',name:'龙、季节与皱纹虫',short:'长期成长',icon:'growth',rules:['wrinkler','dragon','aura','pet','season'],analysis:'growth',link:'成长详情'},
  {id:'events',name:'点击与事件',icon:'spark',rules:['click','golden','deer','fortune','wrath']},
- {id:'supplies',name:'采购与糖块',icon:'buy',rules:['purchase','lump']}
+ {id:'supplies',name:'采购与糖块',icon:'buy',rules:['purchase','lump','lumpLevel']}
 ];
 const shortRules={
  harvest:'种子收获',plant:'按布局补种',cast:'条件施法',pantheon:'神灵调换',godzamok:'爆发出售与回购',
  trade:'条件交易',wrinkler:'皱纹虫收取',dragon:'龙训练',aura:'光环切换',pet:'抚摸龙',season:'季节切换',
- click:'自动连点',golden:'金饼干',deer:'驯鹿',fortune:'幸运新闻',wrath:'愤怒饼干',purchase:'自动采购',lump:'糖块收取'
+ click:'自动连点',golden:'金饼干',deer:'驯鹿',fortune:'幸运新闻',wrath:'愤怒饼干',purchase:'自动采购',lump:'糖块收取',lumpLevel:'糖块升级'
 };
 const unlocks={
  harvest:['Farm','农场'],plant:['Farm','农场'],cast:['Wizard tower','巫师塔'],pantheon:['Temple','神庙'],
@@ -152,7 +152,8 @@ const layouts=[['rows','亲本行'],['checker','交错排列'],['fill','填满�
 const challengeModes=[['none','不启用'],['noClick','无点击'],['noUpgrade','无升级'],['both','无点击与无升级']];
 const slots=['钻石槽','红宝石槽','翡翠槽'];
 const selectedRules=new Map();
-let groupId='garden',planTab='purchase',shownView='',inspectedPurchase='';
+const lumpUnlocks=[['Farm','花园'],['Wizard tower','魔法书'],['Temple','万神殿'],['Bank','股市']];
+let groupId='garden',planTab='purchase',shownView='',inspectedPurchase='',lumpDraft=null;
 
 function activePage(){
  if(page==='queue')return'overview';
@@ -175,12 +176,25 @@ function facts(items){
 function ruleLock(g,key){
  const requirement=unlocks[key];
  if(requirement&&!C.mini(g,requirement[0]))return requirement[1]+'升至 1 级后可用';
- if(key==='lump'&&!C.lumpWindow(g))return'累计烘焙达到糖块解锁条件后可用';
  return'';
+}
+function lumpUpgradeReport(g,c,plan=C.lumpPlan(g,c)){
+ if(plan.status==='done')return{label:'已达标',text:plan.reason,tone:'good'};
+ if(plan.status==='unplanned')return{label:'待规划',text:plan.reason};
+ if(['invalid','different-save'].includes(plan.status))return{label:'目标需确认',text:plan.reason,tone:'warn'};
+ if(!c.lumpLevel)return{label:'已暂停',text:'已暂停此等级目标'};
+ const gate=automationGate(g,c);
+ if(gate)return{label:'已暂停',text:gate,tone:'warn'};
+ if(['noUpgrade','both'].includes(c.challenge))return{label:'受保护',text:'无升级挑战保护',tone:'warn'};
+ if(plan.status==='protected')return{label:'受保护',text:plan.reason,tone:'warn'};
+ if(plan.status==='locked')return{label:'未解锁',text:plan.reason};
+ if(plan.status==='waiting')return{label:'等预算',text:plan.reason};
+ return{label:'待升级',text:plan.reason,tone:'good'};
 }
 function ruleReport(g,c,key){
  const locked=ruleLock(g,key);
  if(locked)return{label:'未解锁',text:locked};
+ if(key==='lumpLevel')return lumpUpgradeReport(g,c);
  if(!c[key])return{label:'已关闭',text:'规则已关闭'};
  const gate=automationGate(g,c);
  if(gate)return{label:'已暂停',text:gate,tone:'warn'};
@@ -210,6 +224,8 @@ function ruleReport(g,c,key){
  }
  if(key==='lump'){
   const lump=C.lumpWindow(g);
+  if(!lump)return C.lumpBalance(g)===null?{label:'未解锁',text:'累计烘焙满 10 亿后开始生长'}:
+   {label:'等待',text:'等待游戏初始化糖块计时'};
   if(lump.overripe)return{label:'等掉落',text:'等待游戏自然结算'};
   if(lump.remaining>0)return{label:'等成熟',text:T(lump.remaining)+'后可安全收取'};
   return{label:'待收取',text:'已到安全收取时间',tone:'good'};
@@ -320,7 +336,12 @@ const ruleConfig={
  fortune(){return check('fortune','领取幸运新闻');},
  wrath(){return check('wrath','拾取愤怒饼干');},
  purchase(g,c){return check('purchase','启用自动采购')+purchaseControls(c)+btn('打开采购规划','plan-tab','purchase','ghost');},
- lump(){return check('lump','安全成熟后收取糖块')+btn('查看糖块规划','plan-tab','lumps','ghost');}
+ lump(){return check('lump','完全成熟后自动收取')+btn('查看糖块规划','plan-tab','lumps','ghost');},
+ lumpLevel(g,c){
+  const plan=C.lumpPlan(g,c);
+  return (plan.object&&!['done','different-save'].includes(plan.status)?check('lumpLevel','让挂机执行此等级目标'):'')+
+   btn('打开糖块规划','plan-tab','lumps','ghost');
+ }
 };
 const descriptions={
  harvest:'按所选条件收获成熟植物，跳过保护格并保留培育亲本。',
@@ -340,7 +361,8 @@ const descriptions={
  fortune:'只处理带有效 Fortune 效果的新闻。',
  wrath:'愤怒饼干可能触发负面效果。',
  purchase:'购买前核对保留线。规划目标完成一次后恢复按收益排序。',
- lump:'等糖块安全成熟后收取。自然掉落由游戏结算。'
+ lump:'完全成熟后收取并开始下一轮生长。自然掉落由游戏结算。',
+ lumpLevel:'每次升 1 级并核对糖块余额，达到规划等级后停止。'
 };
 
 function contextRows(g,c,group,key){
@@ -386,7 +408,16 @@ function contextRows(g,c,group,key){
   return [['本轮生效点击',F(engine.clicks,0)],['本轮事件拾取',F(engine.picked,0)],['面纱',C.veil(g,c)?'保护已生效':'当前未拦截']];
  }
  const plan=key==='purchase'?C.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget}):null;
- const lump=C.lumpWindow(g);
+ const lump=C.lumpWindow(g),balance=C.lumpBalance(g);
+ if(key==='lumpLevel'){
+  const target=C.lumpPlan(g,c);
+  return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],['最低保留',lumpCount(c.lumpReserve)],
+   ...(target.object?[['等级目标',target.name+' '+target.current+' → '+target.target+' 级'],
+    ['还需花费',lumpCount(target.totalCost)],...(target.shortfall?[['预算缺口',lumpCount(target.shortfall)]]:[])]:[])];
+ }
+ if(key==='lump')return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],
+  ['安全收取',lump?lump.overripe?'等待自然掉落':T(lump.remaining):'等待计时'],
+  ['自然掉落',lump?T(lump.dropRemaining):'等待计时']];
  return [['饼干库存',F(g.cookies)],['保留线',F(plan?.target?.keep??C.reserve(g,c))],
   ...(plan?.target?[['目标',plan.target.name],['预算缺口',F(plan.target.shortfall)]]:[]),
   ['糖块',lump?F(g.lumps,0)+' 颗':'尚未解锁'],['安全成熟',lump?lump.overripe?'等待自然掉落':T(lump.remaining):'尚未解锁']];
@@ -411,7 +442,7 @@ function rulesView(g,c){
     <div class="card-title"><h3>${shortRules[key]}</h3>${tag(report.label,report.tone)}</div>
     <p class="rule-reason" data-current-rule="${key}">${esc(report.text)}</p>
     <p class="rule-copy">${esc(descriptions[key])}</p>
-    ${locked?btn('查看糖块与解锁','plan-tab','lumps','ghost'):ruleConfig[key](g,c)}
+    ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):ruleConfig[key](g,c)}
    </section>
    <section class="rule-card" aria-label="玩法状态"><h3>${group.name}状态</h3>
     ${facts(contextRows(g,c,group,key))}
@@ -442,6 +473,12 @@ function nextJobs(g,c){
   const lump=C.lumpWindow(g);
   if(lump&&!lump.overripe)add('lump','安全收取糖块',lump.remaining,'等游戏判定完全成熟');
  }
+ if(c.lumpLevel&&!['noUpgrade','both'].includes(c.challenge)){
+  const plan=C.lumpPlan(g,c);
+  if(['ready','waiting'].includes(plan.status))add('lumpLevel',plan.name+'升至 '+(plan.current+1)+' 级',plan.nextSeconds,
+   (plan.nextShortfall?'下一级还缺 '+lumpCount(plan.nextShortfall)+' · ':'消耗 '+lumpCount(plan.nextCost)+' · ')+
+   '保留 '+lumpCount(plan.reserve)+' · 目标 '+plan.target+' 级');
+ }
  if(c.purchase&&!engine.rebuy.length){
   const plan=C.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget});
   const item=plan.next||plan.target;
@@ -453,7 +490,7 @@ function nextJobs(g,c){
 function protections(g,c){
  if(automationGate(g,c))return[];
  const items=[];
- for(const key of ['harvest','plant','cast','pantheon','trade','godzamok','dragon','aura','wrinkler','season','click','purchase']){
+ for(const key of ['harvest','plant','cast','pantheon','trade','godzamok','dragon','aura','wrinkler','season','click','purchase','lumpLevel']){
   if(!c[key])continue;
   const report=ruleReport(g,c,key);
   if(report.tone==='warn')items.push({key,title:shortRules[key],text:report.text});
@@ -518,10 +555,12 @@ function logsPage(){
 function planningPage(g,c){
  const tabsHtml=tabs([['purchase','采购与收益'],['combo','爆发组合'],['lumps','糖块与解锁'],['prestige','转生目标']],planTab,'plan-tab','规划类型');
  let detail;
- if(planTab==='purchase')detail=purchasePlanning(g,c);
- else if(planTab==='combo')detail=comboPlanning(g,c);
- else if(planTab==='lumps')detail=lumpPlanning(g,c);
- else detail=prestigePlanning(g,c);
+ try{
+  if(planTab==='purchase')detail=purchasePlanning(g,c);
+  else if(planTab==='combo')detail=comboPlanning(g,c);
+  else if(planTab==='lumps')detail=lumpPlanning(g,c);
+  else detail=prestigePlanning(g,c);
+ }catch(error){detail=empty('此规划暂时无法读取',esc(error.message));}
  return '<div class="rule-heading"><h2>规划台</h2></div>'+tabsHtml+detail;
 }
 function purchasePlanning(g,c){
@@ -556,27 +595,93 @@ function purchasePlanning(g,c){
  </div>
  <details class="advanced"><summary>采购设置</summary>${check('purchase','启用自动采购')}${purchaseControls(c)}</details>`;
 }
-function lumpPlanning(g,c){
- const window=C.lumpWindow(g);
- const lines=g.ObjectsById.filter(o=>['Farm','Bank','Temple','Wizard tower','Cursor'].includes(o.name)).map(o=>{
-  const left=g.lumps-o.level-1;
-  const desc='花费 '+(o.level+1)+' 颗'+(o.level===0&&o.name!=='Cursor'?' · 解锁小游戏':'');
-  const next=left<c.lumpReserve?' · 保留后缺 '+(c.lumpReserve-left)+' 颗':' · 升级后余 '+left+' 颗';
-  return row('growth',esc(o.dname||o.name)+' · 等级 '+o.level,desc+(window?next:''),btn('提升 1 级','level',o.id));
+const lumpCount=value=>F(value,0)+' 颗';
+function lumpSelection(g,c){
+ const object=g.Objects?.Farm||g.ObjectsById[0];
+ return lumpDraft||c.lumpGoal||{buildingId:object.id,level:object.level+1};
+}
+function lumpRoutes(g,c,draft){
+ const routes=lumpUnlocks.map(([building,label])=>[g.Objects?.[building],1,'解锁'+label]);
+ routes.push([g.Objects?.Farm,9,'花园 6×6']);
+ const market=C.mini(g,'Bank'),office=market?.offices?.[market.officeLevel];
+ if(office?.cost)routes.push([g.Objects?.Cursor,office.cost[1],'股市办公室门槛']);
+ const buttons=routes.filter(([object,level])=>object&&object.level<level).map(([object,level,label])=>{
+  const plan=C.lumpPlan(g,c,{buildingId:object.id,level});
+  return btn(label+' · '+lumpCount(plan.totalCost),'lump-route',object.id+':'+level,
+   draft.buildingId===object.id&&draft.level===level?'selected':'',!plan.object);
  });
- return block('糖块与小游戏路线',facts([
-  ['库存',window?F(g.lumps,0)+' 颗':'尚未解锁'],
-  ['可分配',window?F(Math.max(0,g.lumps-c.lumpReserve),0)+' 颗':'等待解锁'],
-  ['安全成熟',window?window.overripe?'等待自然掉落':T(window.remaining):'等待解锁']
- ])+`<div class="fields">${field('lumpReserve','手动升级后至少保留糖块','number',{min:0,step:1})}</div>`+
-  lines.join('')+btn('打开糖块收取规则','open-rule','lump','ghost'));
+ return buttons.length?`<div class="actions lump-routes" aria-label="常用糖块路线">${buttons.join('')}</div>`:'';
+}
+function lumpEstimate(g,c,draft){
+ const plan=C.lumpPlan(g,c,{buildingId:draft.buildingId,level:draft.level});
+ if(!plan.object)return note(esc(plan.reason));
+ const {object,current,target}=plan;
+ const manual=C.lumpPlan(g,c,{buildingId:object.id,level:current+1});
+ const goal=c.lumpGoal;
+ const assigned=c.lumpLevel&&goal?.saveId===g.fullDate&&current>=goal.fromLevel&&goal.buildingId===object.id&&goal.level===target;
+ const unlock=lumpUnlocks.find(([name])=>name===object.name);
+ const effects=[];
+ if(unlock&&current===0&&target>=1)effects.push('解锁'+unlock[1]);
+ if(object.name==='Farm'&&current<9&&target>current)effects.push('花园扩至 '+[4,6,9,12,16,20,25,30,36][Math.min(target,9)-1]+' 格');
+ const market=C.mini(g,'Bank'),office=market?.offices?.[market.officeLevel];
+ if(object.name==='Cursor'&&office?.cost&&current<office.cost[1]&&target>=office.cost[1]){
+  effects.push('达到股市办公室的等级要求，还需拥有 '+office.cost[0]+' 个光标');
+ }
+ if(current<10&&target>=10&&object.levelAchiev10&&!object.levelAchiev10.won){
+  effects.push('解锁成就「'+(object.levelAchiev10.dname||object.levelAchiev10.name)+'」');
+ }
+ return facts([
+  ['当前等级',current+' 级'],
+  ['下一级',plan.nextCost?lumpCount(plan.nextCost)+(plan.nextShortfall?' · 缺 '+lumpCount(plan.nextShortfall):''):'已达标'],
+  ['到目标总花费',lumpCount(plan.totalCost)],
+  ['目标预算',plan.status==='done'?'已达标':plan.balance===null?'等待糖块解锁':
+   plan.shortfall?'缺 '+lumpCount(plan.shortfall)+(Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):''):'已备齐']
+ ])+(effects.length?note(esc(effects.join(' · '))):'')+
+  (plan.shortfall&&Number.isFinite(plan.seconds)?note('等待时间按每轮 1 颗和当前生长速度估算。'):'')+
+  `<div class="actions lump-actions">
+   ${btn(assigned?'已交给挂机':'交给挂机','assign-lump','','primary',assigned||plan.status==='done'||!C.compatible(g)||!g.fullDate)}
+   ${btn('手动升 1 级','level',object.id,'',manual.status!=='ready'||!C.compatible(g))}
+  </div>`;
+}
+function lumpPlanning(g,c){
+ const balance=C.lumpBalance(g),window=C.lumpWindow(g);
+ const draft=lumpSelection(g,c),target=C.lumpPlan(g,c);
+ const buildings=g.ObjectsById.filter(object=>object&&typeof object.levelUp==='function');
+ const active=c.lumpGoal?row('growth',target.object?esc(target.name+' '+target.current+' → '+target.target+' 级'):'糖块等级目标',
+  esc(lumpUpgradeReport(g,c,target).text),`<div class="actions">
+   ${btn('升级规则','open-rule','lumpLevel','ghost')}${btn('取消目标','cancel-lump','','ghost')}
+  </div>`):'';
+ return active+lumpRoutes(g,c,draft)+`<div class="rule-layout plan-layout">
+  <section class="rule-card" aria-label="等级目标">
+   <h3>等级目标</h3>
+   <div class="fields">
+    <label class="field"><span>建筑</span><select id="lump-building">${buildings.map(object=>
+     '<option value="'+object.id+'"'+(draft.buildingId===object.id?' selected':'')+'>'+esc(object.dname||object.name)+'</option>').join('')}</select></label>
+    <label class="field"><span>目标等级</span><input id="lump-target-level" type="number" min="1" step="1" value="${esc(draft.level||'')}"></label>
+   </div>
+   <div id="lump-estimate">${lumpEstimate(g,c,draft)}</div>
+  </section>
+  <section class="rule-card" aria-label="糖块状态">
+   <h3>糖块状态</h3>
+   ${facts([
+    ['库存',balance===null?'尚未解锁':lumpCount(balance)],
+    ['可分配',balance===null?'—':lumpCount(Math.max(0,balance-c.lumpReserve))],
+    ['安全收取',window?window.overripe?'等待自然掉落':T(window.remaining):'等待生长'],
+    ['自然掉落',window?T(window.dropRemaining):'等待生长'],
+    ...(balance!==null&&C.has(g,'Sugar baking')?[['糖块烘焙加成','+'+Math.min(100,balance)+'% 产量']]:[])
+   ])}
+   ${field('lumpReserve','糖块最低保留量','number',{min:0,step:1})}
+   ${check('lump','完全成熟后自动收取')}
+   ${balance===null?note('累计烘焙满 10 亿后开始生长。'):''}
+  </section>
+ </div>`;
 }
 function prestigePlanning(g,c){
  const gained=C.prestige(g),chips=gained+C.num(g.heavenlyChips),gap=Math.max(0,c.ascendTarget-gained);
- const upgrades=(g.UpgradesByPool?.prestige||[]).filter(u=>!u.bought);
+ const upgrades=Object.values(g.UpgradesByPool?.prestige||{}).filter(u=>u&&!u.bought);
  const chosen=upgrades.find(u=>String(u.id)===c.heavenlyTarget);
  const price=chosen?C.num(chosen.getPrice?.(),C.num(chosen.basePrice)):0;
- const missing=(g.AchievementsById||[]).filter(a=>!a.won&&a.pool!=='shadow').slice(0,35);
+ const missing=Object.values(g.AchievementsById||{}).filter(a=>a&&!a.won&&a.pool!=='shadow').slice(0,35);
  return block('声望与天堂升级预算',`<div class="fields">
   ${field('ascendTarget','目标新增声望','number',{min:0})}
   ${select('heavenlyTarget','目标天堂升级',[['','不指定'],...upgrades.map(u=>[u.id,u.dname||u.name])])}
@@ -711,14 +816,55 @@ function toggleProtection(key){
  const previous=engine.c.protectedTiles;
  engine.set({protectedTiles:previous.includes(key)?previous.filter(tile=>tile!==key):[...previous,key]});
 }
+function assignLumpGoal(draft){
+ const g=engine.g;
+ engine.syncLumpSettings();
+ const goal={buildingId:draft?.buildingId,level:draft?.level,saveId:g.fullDate};
+ const plan=C.lumpPlan(g,engine.c,goal);
+ if(!C.compatible(g)||!Number.isSafeInteger(goal.saveId)||goal.saveId<=0){
+  toast('等待受支持的存档加载');return;
+ }
+ if(!plan.object||plan.status==='done'){toast(plan.reason);return;}
+ goal.fromLevel=plan.current;
+ ask('交给挂机 · '+plan.name+' '+plan.target+' 级',
+  '从 '+plan.current+' 级升至 '+plan.target+' 级，共需 '+lumpCount(plan.totalCost)+'，每次升级后至少保留 '+lumpCount(plan.reserve)+'。\n'+
+  '此目标只需确认一次。Pilot 会逐级执行，达到目标时结束。',()=>{
+   engine.syncLumpSettings();
+   const fresh=C.lumpPlan(engine.g,engine.c,goal);
+   if(!C.compatible(engine.g)||!fresh.object||fresh.status==='different-save'||fresh.reserve!==plan.reserve||fresh.totalCost>plan.totalCost){
+    throw Error('存档、等级或保留量已变化，请重新确认');
+   }
+   if(fresh.status==='done'){toast(fresh.reason);return;}
+   engine.set({lumpGoal:goal,lumpLevel:true});
+   engine.log('糖块挂机目标 · '+plan.name+' '+plan.target+' 级');
+   void lease();
+  });
+}
+root.addEventListener('input',event=>{
+ const el=event.target;
+ if(el.id!=='lump-target-level')return;
+ const g=engine.g,c=engine.c;
+ lumpDraft={buildingId:lumpSelection(g,c).buildingId,level:el.valueAsNumber};
+ $('lump-estimate').innerHTML=lumpEstimate(g,c,lumpDraft);
+});
 root.addEventListener('change',event=>{
  const el=event.target;
+ if(el.id==='lump-building'){
+  const object=engine.g.ObjectsById[Number(el.value)];
+  if(object){lumpDraft={buildingId:object.id,level:object.level+1};render();}
+  return;
+ }
  if(el.dataset.protect){toggleProtection(el.dataset.protect);return;}
  if(el.dataset.key){
   const key=el.dataset.key;
   const value=el.type==='checkbox'?el.checked:el.value;
   if(key.startsWith('god-')){
    const gods=[...engine.c.gods];gods[Number(key.slice(4))]=Number(value);engine.set({gods});return;
+  }
+  if(key==='lumpReserve'&&el.value===''){el.value=engine.c.lumpReserve;return;}
+  if(key==='lumpLevel'&&value===true){
+   el.checked=false;
+   assignLumpGoal(engine.c.lumpGoal);return;
   }
   if(value===true&&dangerousRules[key]){
    el.checked=false;
@@ -773,6 +919,19 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
   main.querySelector('[data-action="plan-tab"][data-arg="'+CSS.escape(arg)+'"]')?.focus({preventScroll:true});
   return;
  }
+ if(action==='plan-unlock'||action==='lump-route'){
+  const [id,level]=arg.split(':').map(Number);
+  const object=action==='plan-unlock'?g.Objects?.[arg]:g.ObjectsById?.[id];
+  if(!object)return;
+  lumpDraft={buildingId:object.id,level:action==='plan-unlock'?Math.max(1,object.level+1):level};
+  planTab='lumps';
+  if(page==='planning')render();
+  else navigate('planning');
+  $('lump-target-level')?.focus({preventScroll:true});
+  return;
+ }
+ if(action==='assign-lump'){assignLumpGoal(lumpSelection(g,c));return;}
+ if(action==='cancel-lump'){engine.set({lumpGoal:null,lumpLevel:false});engine.log('已取消糖块等级目标');void lease();return;}
  if(action==='preset'){preset(arg);return;}
  if(action==='update'){await checkUpdate();return;}
  if(action==='inspect-purchase'){inspectedPurchase=arg;render();return;}
@@ -811,7 +970,21 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
  if(action==='freeze'){const m=C.mini(g,'Farm');engine.backup('花园冻结切换前');const tool=m.tools?.freeze;if(tool?.func)tool.func();else throw Error('当前版本冻结接口不可用，请使用原花园按钮');render();}
  if(action==='cast-manual'){const m=C.mini(g,'Wizard tower'),s=m.spells[arg];ask('施放 '+s.name,`消耗 ${m.getSpellCost(s)} 魔力，当前反噬率 ${F(m.getFailChance(s)*100)}%。\n立即施放，不等待自动化触发条件。`,()=>{engine.manualGate();if(m.magic-m.getSpellCost(s)<engine.c.magicReserve)throw Error('魔力保留量不足');engine.backup('手动施法前');m.castSpell(s);});}
  if(action==='stock-buy'||action==='stock-sell'){const m=C.mini(g,'Bank'),q=m.goodsById[Number(arg)];ask((action==='stock-buy'?'买入 1 单位 ':'卖出全部 ')+q.name,'按确认时游戏价格成交；手动卖出可以处理成本未知的仓位。',()=>{engine.manualGate();engine.backup('手动交易前');if(action==='stock-buy'){const cost=m.getGoodPrice(q)*(1+.2*.95**m.brokers)*g.cookiesPsRawHighest;if(g.cookies-cost<C.reserve(g,engine.c))throw Error('库存保留线不足');if(!m.buyGood(q.id,1))throw Error('游戏暂不允许该交易');delete engine.ledger[q.id];}else{if(!m.sellGood(q.id,q.stock))throw Error('游戏暂不允许该交易');delete engine.ledger[q.id];}});}
- if(action==='level'){const o=g.ObjectsById[Number(arg)];ask('提升 '+(o.dname||o.name)+' 等级','消耗 '+(o.level+1)+' 糖块；当前最低保留 '+c.lumpReserve+'。',()=>{engine.manualGate();if(g.lumps-o.level-1<engine.c.lumpReserve)throw Error('糖块保留量不足');engine.backup('建筑升级前',true);o.levelUp();});}
+ if(action==='level'){
+  const object=g.ObjectsById[Number(arg)];
+  const goal={buildingId:object?.id,level:object?.level+1,saveId:g.fullDate};
+  const plan=C.lumpPlan(g,c,goal);
+  if(plan.status!=='ready')throw Error(plan.reason);
+  ask('提升 '+plan.name+' 等级','消耗 '+lumpCount(plan.nextCost)+'，保留至少 '+lumpCount(plan.reserve)+'。',()=>{
+   engine.manualGate();
+   engine.syncLumpSettings();
+   const fresh=C.lumpPlan(engine.g,engine.c,goal);
+   if(fresh.status!=='ready')throw Error(fresh.reason);
+   if(fresh.object!==object||fresh.current!==plan.current)throw Error('建筑等级已变化，请重新确认');
+   engine.backup('建筑升级前',true);
+   object.levelUp();
+  });
+ }
  if(action==='dragon-manual'){const step=g.dragonLevels[g.dragonLevel];ask('训练龙','本级成本：'+C.plain(step?.costStr?.()||'无法升级')+'。可能牺牲建筑。',()=>{engine.manualGate();if(!C.has(g,'A crumbly egg')||!step.cost?.())throw Error('尚未解锁或材料不足');engine.backup('手动龙升级前',true);g.UpgradeDragon();});}
  if(action==='wrinklers-manual'){ask('收取普通皱纹虫','将普通皱纹虫交由游戏结算，保留全部闪光个体。',()=>{engine.manualGate();engine.backup('皱纹虫收取前');for(const w of g.wrinklers)if(w.phase===2&&w.type!==1)w.hp=0;});}
  if(action==='ascend'){ask('准备转生','先创建重点快照，再打开游戏自己的转生确认窗口。',()=>{engine.manualGate();engine.backup('转生前',true);engine.setPaused(true);releaseLease();show(false);g.Ascend();});}
@@ -841,7 +1014,14 @@ function visibility(){
  void lease();
  if(engine.c.open&&!$('confirm').open)render();
 }
-function syncPause(event){
+function syncStorage(event){
+ if(event.key===E.SETTINGS){
+  const before=[engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve];
+  if(!engine.syncLumpSettings()||JSON.stringify(before)===JSON.stringify([engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve]))return;
+  void lease();
+  if(engine.c.open&&!$('confirm').open)render();
+  return;
+ }
  if(event.key!==E.PAUSE||!['true','false'].includes(event.newValue))return;
  engine.paused=event.newValue==='true';
  engine.startupHold=false;
@@ -852,7 +1032,7 @@ function syncPause(event){
 }
 document.addEventListener('keydown',key,true);
 document.addEventListener('visibilitychange',visibility);
-window.addEventListener('storage',syncPause);
+window.addEventListener('storage',syncStorage);
 function destroy(){
  destroyed=true;
  clearTimeout(timer);clearTimeout(toastTimer);
@@ -860,7 +1040,7 @@ function destroy(){
  media.removeEventListener('change',theme);
  document.removeEventListener('keydown',key,true);
  document.removeEventListener('visibilitychange',visibility);
- window.removeEventListener('storage',syncPause);
+ window.removeEventListener('storage',syncStorage);
  host.remove();entryHost.remove();adStyle.remove();
  audio?.close().catch(()=>{});
  for(const url of urls)URL.revokeObjectURL(url);

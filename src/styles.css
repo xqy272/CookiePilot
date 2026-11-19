@@ -212,6 +212,9 @@ button.danger { color: var(--bad); }
 .queue-card h3 { margin-bottom: 5px; }
 
 .plan-layout { margin-top: 11px; }
+.lump-routes { margin-top: 8px; }
+.lump-routes button.selected { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.lump-actions { margin-top: 7px; }
 .candidates { margin-top: 6px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .candidate {
   width: 100%;

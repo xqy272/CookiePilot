@@ -35,7 +35,7 @@ const header=`// ==UserScript==
 `;
 const userscript=header+'\n'+code;
 await write(`dist/${channel}.user.js`,userscript);await write(`dist/${channel}.meta.js`,header);await write('CookiePilot.user.js',userscript);await write('extension/pilot.bundle.js',code);
-await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'全新工作台；建筑与升级采购；花园培育、条件施法、独立预测、万神殿、股市、成长、备份与在线更新。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
+await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'修复真实存档的规划台读取；加入糖块安全收取计时、建筑升级预算及挂机等级目标。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
 if(channel==='stable'){
   let mirror=false;try{const prior=JSON.parse(await read('dist/beta.json'));mirror=prior.version===version;}catch{mirror=true;}
   if(mirror){

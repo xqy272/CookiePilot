@@ -40,6 +40,47 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   click('[data-action="navigate"][data-arg="queue"]');
   assert(root().getElementById('main').textContent.includes('完整队列'),'完整队列不可用');
  });
+ await test('真实成就字典可以读取，规划标签仍可切换',()=>{
+  page('planning');
+  click('[data-action="plan-tab"][data-arg="prestige"]');
+  const workspace=root().getElementById('main');
+  assert(!Array.isArray(g.AchievementsById)&&workspace.textContent.includes('建造者'),'无法读取成就字典');
+  click('[data-action="plan-tab"][data-arg="lumps"]');
+  assert(workspace.querySelector('[aria-label="糖块状态"]'),'无法从转生切换到糖块规划');
+ });
+ await test('糖块规划预览、确认、排队、收取和自动升级',async()=>{
+  const workspace=root().getElementById('main'),farm=g.Objects.Farm,startLumps=g.lumps,startTime=g.lumpT;
+  const initialLevel=farm.level;
+  const planButton='[data-action="plan-tab"][data-arg="lumps"]';
+  g.lumps=102;
+  try{
+   page('planning');click(planButton);
+   click(`[data-action="lump-route"][data-arg="${farm.id}:9"]`);
+   const field=root().getElementById('lump-target-level');
+   assert(field.value==='9'&&workspace.textContent.includes('花园扩至 36 格'),'花园路线未更新目标');
+   field.value='3';field.dispatchEvent(new Event('input',{bubbles:true}));
+   assert(/到目标总花费5 颗/.test(workspace.textContent),'没有按逐级成本重算');
+   assert(!e.c.lumpGoal,'预览已修改挂机');
+   click('[data-action="assign-lump"]');
+   assert(root().getElementById('confirm').open&&!e.c.lumpLevel,'花费未先确认');
+   click('#confirm-cancel');
+   assert(!e.c.lumpLevel,'取消后仍启用');
+   click('[data-action="assign-lump"]');click('#confirm-ok');
+   await delay(1400);
+   assert(farm.level===2&&g.lumps===100&&e.c.lumpLevel,'未按保留量只升一级');
+   page('overview');click('[data-action="navigate"][data-arg="queue"]');
+   assert(/农场升至 3 级/.test(workspace.textContent),'升级没有进入挂机队列');
+   page('planning');click(planButton);click('[data-key="lump"]');
+   g.lumps=102;g.lumpT=Date.now()-g.lumpRipeAge-100;
+   await delay(1400);
+   assert(farm.level===3&&g.lumps===100&&!e.c.lumpLevel&&e.c.lump,'收取后未按预算完成目标，或干扰独立收取开关');
+   page('history');
+   assert(workspace.textContent.includes('糖块目标达成')&&workspace.textContent.includes('安全收取 1 颗糖块'),'没有执行记录');
+  }finally{
+   farm.level=initialLevel;g.lumps=startLumps;g.lumpT=startTime;
+   e.set({lump:false,lumpLevel:false,lumpGoal:null});
+  }
+ });
  await test('20 次每秒连点与全局暂停',async()=>{e.set({click:true,rate:20});await delay(1300);const a=g.cookieClicks;await delay(1100);assert(g.cookieClicks-a>=15&&g.cookieClicks-a<=27,'实际频率 '+(g.cookieClicks-a));click('#pause');const b=g.cookieClicks;await delay(300);assert(g.cookieClicks===b,'暂停后仍点击');click('#pause');e.set({click:false});});
  await test('40 次每秒目标没有被低频调度限制',async()=>{e.set({click:true,rate:40});await delay(1300);const a=g.cookieClicks;await delay(1050);assert(g.cookieClicks-a>=29&&g.cookieClicks-a<=45,'实际频率 '+(g.cookieClicks-a));e.set({click:false});});
  await test('金饼干与驯鹿，默认跳过愤怒饼干',async()=>{e.set({golden:true,deer:true});await delay(1300);const a=g.spawn(),b=g.spawn('golden',true),c=g.spawn('reindeer');await delay(400);assert(a.popped&&c.popped&&!b.popped,'拾取不正确');e.set({golden:false,deer:false});g.shimmers=[];});

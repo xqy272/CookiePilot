@@ -1,13 +1,13 @@
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='2.1.0', SUPPORTED='2.058';
-const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
+const VERSION='2.1.1', SUPPORTED='2.058';
+const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',open:false,background:false,remember:false,ads:true,protectVeil:true,alerts:true,sound:false,rate:20,clickMode:'always',reserveMode:'none',reserve:0,holdCombo:true,purchaseMode:'efficient',bridgePurchase:false,target:'',blocked:[],maxBuilding:10000,bulk:1,
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
 spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
-lumpReserve:100,wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
+lumpReserve:100,lumpGoal:null,wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
 godzamokBuildings:[],godzamokKeep:1,godzamokSell:100,seasonTarget:'',ascendTarget:365,heavenlyTarget:'',
 updateChannel:'stable',releaseBase:'https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist',updateCheck:true,backupMinutes:10,
 ...Object.fromEntries(AUTO.map(k=>[k,false]))};
@@ -21,6 +21,9 @@ function config(input={},startup=false){
  const ranges={rate:[1,40],reserve:[0,1e300],maxBuilding:[1,100000],bulk:[1,100],gardenSpend:[0,100],harvestBuff:[1,1000000],maxFail:[0,100],magicReserve:[0,1000],castCooldown:[1,86400],marketBuy:[0,49],marketSell:[51,100],marketBudget:[0,100],marketCap:[1,10000],marketMinSamples:[5,2000],marketProfit:[0,10000],lumpReserve:[0,100000],wrinklerKeep:[0,14],dragonMax:[0,100],aura0:[-1,100],aura1:[-1,100],swapReserve:[0,3],godzamokKeep:[0,10000],godzamokSell:[1,10000],ascendTarget:[0,1e300],backupMinutes:[1,120]};
  for(const [k,[a,b]]of Object.entries(ranges))c[k]=clamp(input[k],a,b,c[k]);
  for(const k of ['rate','maxBuilding','bulk','marketCap','marketMinSamples','wrinklerKeep','dragonMax','aura0','aura1','swapReserve','godzamokKeep','godzamokSell'])c[k]=Math.floor(c[k]);
+ c.lumpReserve=Math.ceil(c.lumpReserve);
+ c.lumpGoal=lumpGoal(input.lumpGoal);
+ if(!c.lumpGoal?.saveId)c.lumpLevel=false;
  const enums={theme:['system','dark','light'],density:['comfortable','compact'],challenge:['none','noClick','noUpgrade','both'],clickMode:['always','buff'],reserveMode:['none','lucky','frenzy','custom'],purchaseMode:['efficient','target','plan'],gardenMode:['seeds','mature','buff'],replantLayout:['rows','checker','fill'],castCondition:['mana','full','frenzy','click'],updateChannel:['stable','beta'],seasonTarget:['','christmas','easter','halloween','valentines','fools']};
  for(const[k,values]of Object.entries(enums))if(values.includes(input[k]))c[k]=input[k];
  for(const k of ['seedA','seedB','target','spell','heavenlyTarget'])if(typeof input[k]==='string')c[k]=input[k].slice(0,150);
@@ -165,10 +168,59 @@ function harvestTargets(g,c,info=garden(g)){
  }).sort((a,b)=>Number(b.mature)-Number(a.mature)||Number(a.p.unlocked)-Number(b.p.unlocked)||(a.mature?a.death-b.death:a.eta-b.eta));
 }
 const tileName=tile=>String.fromCharCode(65+tile.y)+(tile.x+1);
+function lumpBalance(g){
+ return g.canLumps?.()&&Number.isFinite(g.lumps)&&g.lumps>=0?g.lumps:null;
+}
 function lumpWindow(g,now=Date.now()){
- if(!g.canLumps?.()||![g.lumpT,g.lumpRipeAge,g.lumpOverripeAge].every(Number.isFinite))return null;
+ if(lumpBalance(g)===null||![g.lumpT,g.lumpRipeAge,g.lumpOverripeAge].every(Number.isFinite)||
+    g.lumpRipeAge<=0||g.lumpOverripeAge<=g.lumpRipeAge)return null;
  const age=now-g.lumpT;
- return{remaining:Math.max(0,(g.lumpRipeAge-age)/1000),overripe:age>=g.lumpOverripeAge};
+ const ripeSeconds=g.lumpRipeAge/1000,dropSeconds=g.lumpOverripeAge/1000;
+ return{
+  remaining:Math.max(0,(g.lumpRipeAge-age)/1000),
+  dropRemaining:Math.max(0,(g.lumpOverripeAge-age)/1000),
+  overripe:age>=g.lumpOverripeAge,
+  ripeSeconds,dropSeconds
+ };
+}
+function lumpGoal(input){
+ if(!input||!Number.isSafeInteger(input.buildingId)||input.buildingId<0||
+    !Number.isSafeInteger(input.level)||input.level<1)return null;
+ const {buildingId,level}=input;
+ const saveId=Number.isSafeInteger(input.saveId)&&input.saveId>0?input.saveId:0;
+ const fromLevel=Number.isSafeInteger(input.fromLevel)&&input.fromLevel>=0&&input.fromLevel<level?input.fromLevel:0;
+ return{buildingId,level,saveId,fromLevel};
+}
+function lumpPlan(g,c,targetGoal=c.lumpGoal,now=Date.now()){
+ if(!targetGoal)return{status:'unplanned',reason:'在规划台选择建筑和目标等级'};
+ const goal=lumpGoal(targetGoal);
+ const object=goal&&g.ObjectsById?.[goal.buildingId];
+ if(!object||!Number.isSafeInteger(object.level)||object.level<0||typeof object.levelUp!=='function'){
+  return{status:'invalid',reason:'建筑或目标等级不可用'};
+ }
+ const current=object.level,target=goal.level,levels=Math.max(0,target-current),nextCost=levels?current+1:0;
+ const totalCost=levels%2===0?(levels/2)*(nextCost+target):levels*(current+(levels+1)/2);
+ if(!Number.isSafeInteger(totalCost))return{status:'invalid',reason:'目标等级超出可计算的糖块预算'};
+ const name=object.dname||object.name,balance=lumpBalance(g),reserve=c.lumpReserve;
+ const plan={object,name,current,target,nextCost,totalCost,balance,reserve};
+ if(goal.saveId&&goal.saveId!==g.fullDate)return{...plan,status:'different-save',reason:'当前存档已变化，请重新确认目标'};
+ if(current<goal.fromLevel)return{...plan,status:'different-save',reason:'建筑等级已回退，请重新确认目标'};
+ if(!levels)return{...plan,status:'done',reason:'已达到 '+name+' '+target+' 级'};
+ if(balance===null)return{...plan,status:'locked',reason:'累计烘焙满 10 亿后解锁糖块'};
+ const shortfall=Math.max(0,Math.ceil(totalCost+reserve-balance));
+ const nextShortfall=Math.max(0,Math.ceil(nextCost+reserve-balance));
+ const window=lumpWindow(g,now);
+ const secondsFor=count=>{
+  if(!count)return 0;
+  if(!window)return Infinity;
+  const first=c.lump&&!window.overripe?window.remaining:window.dropRemaining;
+  const interval=c.lump?window.ripeSeconds:window.dropSeconds;
+  return first+(count-1)*interval;
+ };
+ const budget={...plan,shortfall,nextShortfall,seconds:secondsFor(shortfall),nextSeconds:secondsFor(nextShortfall)};
+ if(g.ascensionMode===1)return{...budget,status:'protected',reason:'当前挑战轮回暂停糖块升级'};
+ if(nextShortfall)return{...budget,status:'waiting',reason:'下一级还缺 '+fmt(nextShortfall,0)+' 颗糖块'};
+ return{...budget,status:'ready',reason:'可升至 '+(current+1)+' 级 · 消耗 '+fmt(nextCost,0)+' 颗糖块'};
 }
 function castPlan(g,c,lastCast,now=Date.now()){
  const m=mini(g,'Wizard tower');
@@ -229,5 +281,5 @@ function wrinklerValue(g,w){let v=w.sucked*1.1*(w.type===1?3:1)*(1+.2*aura(g,'Dr
 function prestige(g){const before=num(g.HowMuchPrestige?.(g.cookiesReset)),after=num(g.HowMuchPrestige?.(num(g.cookiesReset)+num(g.cookiesEarned)));return Math.max(0,Math.floor(after)-Math.floor(before));}
 function semver(s){if(!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/.test(s))throw Error('无效版本号');return s.split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):x);}
 function newer(a,b){const x=semver(a),y=semver(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];if(x.length===3||y.length===3)return x.length===3&&y.length>3;return (x[3]===y[3]?x[4]>y[4]:x[3]==='rc');}
-return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,lumpWindow,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
+return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,lumpBalance,lumpWindow,lumpPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
 });

@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "全新工作台；建筑与升级采购；花园培育、条件施法、独立预测、万神殿、股市、成长、备份与在线更新。",
+  "notes": "修复真实存档的规划台读取；加入糖块安全收取计时、建筑升级预算及挂机等级目标。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.1.0/CookiePilot-v2.1.0.zip",
-  "sha256": "0f9c1213a9fd6978e89b784ef38bdb83e0d4c98b881a04b88737554d5b9dae2a"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.1.1/CookiePilot-v2.1.1.zip",
+  "sha256": "8f7fe67ed51306064b11055d5031a96e3d5f86d03e01c20a0ad02e2412530ca3"
 }

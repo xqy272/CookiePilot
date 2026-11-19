@@ -1,6 +1,7 @@
 (function(root,factory){const C=typeof module==='object'&&module.exports?require('./core.js'):root.CookiePilotCore2;const api=factory(C);if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotEngine2=api;})(globalThis,function(C){
 'use strict';
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
+const lumpKeys=['lumpGoal','lumpReserve','lumpLevel'];
 class Engine{
  constructor(getGame,storage,hooks={}){this.getGame=getGame;this.storage=storage;this.hooks=hooks;this.paused=false;this.locked=false;this.states={};this.logs=[];this.next={};this.clicks=0;this.picked=0;this.disposed=false;this.hist={};this.ledger={};this.marketTick=null;this.lastBackup=Date.now();this.lastCast=0;this.godzamokBuff=null;this.rebuy=[];this.protectedSnapshot=null;
   this.actions=0;
@@ -20,7 +21,7 @@ class Engine{
  }
  get g(){return this.getGame();}
  env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:C.AUTO.some(k=>this.c[k])&&!this.locked};}
- set(update){this.c=C.config({...this.c,...update});this.persist();this.hooks.change?.();}
+ set(update){this.c=C.config({...this.c,...update});this.persist(update);this.hooks.change?.();}
  setPaused(value){
   this.paused=value;
   this.startupHold=false;
@@ -30,13 +31,34 @@ class Engine{
   this.log(value?'手动暂停自动化':'继续自动化，按当前游戏状态重新检查');
   return true;
  }
- persist(){try{this.storage.setItem(SETTINGS,JSON.stringify({...this.c,version:C.VERSION}));}catch(e){this.paused=true;this.log('设置保存失败，自动化已暂停：'+e.message);}}
+ savedLumpSettings(){
+  try{
+   const saved=JSON.parse(this.storage.getItem(SETTINGS));
+   if(saved?.schema!==2)return null;
+   const {lumpGoal,lumpReserve,lumpLevel}=C.config(saved);
+   return{lumpGoal,lumpReserve,lumpLevel};
+  }catch{return null;}
+ }
+ syncLumpSettings(){
+  const saved=this.savedLumpSettings();
+  if(!saved)return false;
+  Object.assign(this.c,saved);
+  return true;
+ }
+ persist(update={}){
+  try{
+   const saved=this.savedLumpSettings();
+   if(saved)for(const key of lumpKeys)if(!Object.hasOwn(update,key))this.c[key]=saved[key];
+   if(!this.c.lumpGoal)this.c.lumpLevel=false;
+   this.storage.setItem(SETTINGS,JSON.stringify({...this.c,version:C.VERSION}));
+  }catch(e){this.paused=true;this.log('设置保存失败，自动化已暂停：'+e.message);}
+ }
  log(text,actions=0){this.actions+=actions;this.logs.unshift({at:Date.now(),text});this.logs.length=Math.min(this.logs.length,120);this.hooks.log?.(text);}
  state(k,text){this.states[k]=text;return false;}
  backups(){try{const rows=JSON.parse(this.storage.getItem(BACKUPS)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&typeof x.save==='string'&&Number.isFinite(x.at)).slice(0,15):[];}catch{return[];}}
  backup(label='手动备份',pin=false){const g=this.g;if(!C.ready(g)||g.OnAscend||g.AscendTimer>0)throw Error('游戏未就绪或正在转生');const save=g.WriteSave(1);if(typeof save!=='string'||!save.length||save.length>2000000)throw Error('未取得有效存档');this.backupSerial=(this.backupSerial||0)+1;const entry={id:Date.now()+'-'+this.backupSerial,at:Date.now(),label,save,settings:structuredClone(this.c),pin,version:String(g.version)};const old=this.backups();const pinned=old.filter(x=>x.pin).slice(0,pin?4:5),normal=old.filter(x=>!x.pin).slice(0,9);this.storage.setItem(BACKUPS,JSON.stringify([entry,...pinned,...normal]));this.lastBackup=Date.now();return entry;}
  manualGate(){const reason=C.gate(this.g,this.c);if(reason)throw Error(reason);}
- attempt(k,fn){if(!this.c[k])return this.state(k,'已关闭');const reason=C.gate(this.g,this.c,this.env());if(reason)return this.state(k,reason);if(['noClick','both'].includes(this.c.challenge)&&k==='click')return this.state(k,'无点击挑战保护');if(['noUpgrade','both'].includes(this.c.challenge)&&['season','dragon'].includes(k))return this.state(k,'无升级挑战保护');try{return fn.call(this);}catch(e){this.c[k]=false;this.persist();this.state(k,'发生错误，已关闭');this.log(k+' 已停止：'+e.message);return false;}}
+ attempt(k,fn){if(!this.c[k])return this.state(k,'已关闭');const reason=C.gate(this.g,this.c,this.env());if(reason)return this.state(k,reason);if(['noClick','both'].includes(this.c.challenge)&&k==='click')return this.state(k,'无点击挑战保护');if(['noUpgrade','both'].includes(this.c.challenge)&&['season','dragon','lumpLevel'].includes(k))return this.state(k,'无升级挑战保护');try{return fn.call(this);}catch(e){this.c[k]=false;this.persist({[k]:false});this.state(k,'发生错误，已关闭');this.log((k==='lumpLevel'?'糖块升级':k)+' 已停止：'+e.message);return false;}}
  click(now=performance.now()){this.attempt('click',()=>{if(C.veil(this.g,this.c))return this.state('click','面纱保护中');if(this.c.clickMode==='buff'&&!C.clickBuff(this.g))return this.state('click','等待点击增益');if(now<(this.next.click||0))return;this.next.click=now+1000/this.c.rate;const before=this.g.cookieClicks;this.g.ClickCookie();this.clicks+=Math.max(0,this.g.cookieClicks-before);this.state('click','运行中 · '+this.c.rate+' 次/秒目标');});}
  persistMarket(){try{this.storage.setItem(HISTORY,JSON.stringify({hist:this.hist,ledger:this.ledger,context:this.historyContext}));}catch{}}
  sampleMarket(){const g=this.g,m=C.mini(g,'Bank');if(!m)return;const context=[g.startDate,g.Objects.Bank.level,g.dragonAura,g.dragonAura2].join(':');if(context!==this.historyContext){this.hist={};this.ledger={};this.marketTick=null;this.historyContext=context;}
@@ -88,7 +110,7 @@ class Engine{
    return this.state('fortune','等待幸运新闻');
   });
   if(now>=(this.next.slow||0)){this.next.slow=now+1000;
-   for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]])this.attempt(k,fn);
+   for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]])this.attempt(k,fn);
   }
   if(C.ready(this.g)&&!this.g.OnAscend&&!this.g.AscendTimer&&!this.g.promptOn&&now-this.lastBackup>=this.c.backupMinutes*60000){try{this.backup('自动快照');}catch(e){this.lastBackup=now;this.log('自动备份失败：'+e.message);}}
  }
@@ -199,9 +221,50 @@ class Engine{
   const fresh=C.lumpWindow(g);
   if(!fresh||fresh.remaining||fresh.overripe||g.lumpT!==previous)return this.state('lump','糖块周期已变化，重新检查');
   g.clickLump();
-  if(g.lumpT===previous||g.lumps<=balance)return this.state('lump','游戏暂未确认收取');
-  this.log('安全收取 '+(g.lumps-balance)+' 颗糖块',1);
+  if(g.lumpT===previous)return this.state('lump','游戏暂未确认收取');
+  const gained=g.lumps-balance;
+  this.log(gained>0?'安全收取 '+gained+' 颗糖块':'游戏已结算成熟糖块 · 本次获得 0 颗',1);
   return this.state('lump','等待下一颗糖块');
+ }
+ lumpLevel(){
+  const key='lumpLevel',g=this.g;
+  if(!this.syncLumpSettings()||!this.c.lumpLevel)return this.state(key,'等待确认等级目标');
+  const goal=this.c.lumpGoal,plan=C.lumpPlan(g,this.c);
+  const finish=()=>{
+   this.set({lumpLevel:false});
+   this.log('糖块目标达成 · '+plan.name+' '+plan.target+' 级');
+   return this.state(key,'已达到目标等级');
+  };
+  if(plan.status==='done')return finish();
+  if(plan.status!=='ready')return this.state(key,plan.reason);
+  this.backup('挂机糖块升级前',true);
+
+  if(!this.syncLumpSettings()||!this.c.lumpLevel||
+     goal.buildingId!==this.c.lumpGoal.buildingId||goal.level!==this.c.lumpGoal.level||
+     goal.saveId!==this.c.lumpGoal.saveId||goal.fromLevel!==this.c.lumpGoal.fromLevel){
+   return this.state(key,'等级目标已变化，重新检查');
+  }
+  const gate=C.gate(this.g,this.c,this.env());
+  if(gate||this.storage.getItem(PAUSE)==='true')return this.state(key,gate||'全部自动化已暂停');
+  if(this.g!==g)return this.state(key,'当前存档已变化，重新检查');
+  if(['noUpgrade','both'].includes(this.c.challenge))return this.state(key,'无升级挑战保护');
+  const fresh=C.lumpPlan(g,this.c);
+  if(fresh.status!=='ready')return this.state(key,fresh.reason);
+  if(fresh.object!==plan.object||fresh.current!==plan.current)return this.state(key,'建筑等级已变化，重新检查');
+
+  const {object,current,nextCost}=fresh;
+  const balance=g.lumps,prefs=g.prefs,askLumps=prefs?.askLumps;
+  // The player already confirmed this exact goal. Keep the game preference for all other spending.
+  try{
+   if(askLumps)prefs.askLumps=0;
+   object.levelUp();
+  }finally{
+   if(askLumps)prefs.askLumps=askLumps;
+  }
+  if(object.level!==current+1||g.lumps!==balance-nextCost)throw Error('游戏未确认升级与糖块扣款，请检查建筑后重新启用');
+  this.log('糖块升级 · '+fresh.name+' '+current+' → '+object.level+' 级 · 花费 '+nextCost+' 颗 · 剩 '+g.lumps+' 颗',1);
+  if(object.level>=fresh.target)return finish();
+  return this.state(key,'已升至 '+object.level+' 级');
  }
  wrinkler(){
   const g=this.g,c=this.c,list=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
