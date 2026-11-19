@@ -32,3 +32,59 @@ test('version comparisons handle stable, beta, release candidate and malformed d
 test('HTML output is escaped, unsupported data is plain text',()=>{assert.equal(C.escape('<img onerror="x">'),'&lt;img onerror=&quot;x&quot;&gt;');assert.equal(C.plain('<b>Hello</b> world'),'Hello world');});
 test('challenge guard blocks auto clicks and auto upgrade targets',()=>{const{e,g}=setup();e.set({click:true,challenge:'both'});e.click(1000);assert.equal(g.cookieClicks,0);e.set({purchase:true,purchaseMode:'target',target:'u:'+g.Upgrades['Plain cookies'].id});e.purchase();assert.equal(g.Upgrades['Plain cookies'].bought,0);});
 test('disabled automation does not claim another tab is active',()=>{const{e,g}=setup();e.locked=false;assert.equal(C.gate(g,e.c,e.env()),'');});
+test('manual pause survives a reload and keeps configured rules',()=>{
+ const {g,e,store}=setup();
+ e.set({click:true,remember:true});
+ assert.equal(e.setPaused(true),true);
+ const resumed=new Engine(()=>g,store);
+ assert.equal(resumed.c.click,true);
+ assert.equal(resumed.paused,true);
+ resumed.setPaused(false);
+ assert.equal(new Engine(()=>g,store).paused,false);
+ resumed.set({remember:false});
+ const waiting=new Engine(()=>g,store);
+ assert.equal(waiting.c.click,true);
+ assert.equal(waiting.startupHold,true);
+});
+
+test('one-time procurement only completes after the game confirms the purchase',()=>{
+ const {g,e}=setup();
+ const upgrade=g.Upgrades['Plain cookies'];
+ const buy=upgrade.buy;
+ e.set({purchase:true,purchaseMode:'plan',target:'u:'+upgrade.id});
+ upgrade.buy=()=>false;
+ e.purchase();
+ assert.equal(e.actions,0);
+ assert.equal(e.c.purchaseMode,'plan');
+ upgrade.buy=buy;
+ e.purchase();
+ assert.equal(upgrade.bought,1);
+ assert.equal(e.actions,1);
+ assert.equal(e.c.purchaseMode,'efficient');
+ assert.equal(e.c.target,'');
+});
+
+test('optional bridge respects the reserve and only improves the target wait',()=>{
+ const g=make();
+ g.cookies=10000;g.cookiesPs=100;g.unbuffedCps=100;
+ const c=C.config({purchaseMode:'plan',reserveMode:'custom',reserve:1000,target:'u:1',bridgePurchase:true});
+ const target={id:'u:1',name:'目标升级',auto:true,price:19000,delta:0,affordable:false,shortfall:10000,eta:100};
+ const candidate={id:'b:2',name:'过渡建筑',auto:true,price:1000,delta:100,affordable:true};
+ const rows=[target,candidate];
+ let plan=C.purchasePlan(g,c,{rows});
+ assert.equal(plan.next,candidate);assert.equal(plan.bridge,true);assert.equal(plan.targetSeconds,55);
+ plan=C.purchasePlan(g,c,{rows,bridgedTarget:target.id});
+ assert.equal(plan.next,undefined);
+ candidate.delta=1;
+ assert.equal(C.purchasePlan(g,c,{rows}).next,undefined);
+ candidate.delta=100;candidate.affordable=false;
+ assert.equal(C.purchasePlan(g,c,{rows}).next,undefined);
+});
+
+test('lucky reserve includes estimated post-purchase income',()=>{
+ const g=make();
+ const rows=C.purchases(g,C.config({reserveMode:'lucky'}));
+ const upgrade=rows.find(row=>row.object.name==='Plain cookies');
+ assert.ok(upgrade.delta>0);
+ assert.equal(upgrade.keep,(g.cookiesPs+upgrade.delta)*6000);
+});

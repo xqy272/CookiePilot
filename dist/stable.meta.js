@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cookie Pilot · 饼干领航员
 // @namespace    https://github.com/xqy272/CookiePilot
-// @version      2.0.0
+// @version      2.1.0
 // @description  全流程 Cookie Clicker 中文助手：现代工作台、采购、花园、法术、股市、成长、存档与在线更新。
 // @author       Cookie Pilot contributors
 // @match        https://orteil.dashnet.org/cookieclicker/

@@ -1,65 +1,277 @@
 (function(root,factory){const C=typeof module==='object'&&module.exports?require('./core.js'):root.CookiePilotCore2;const api=factory(C);if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotEngine2=api;})(globalThis,function(C){
 'use strict';
-const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2';
+const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
 class Engine{
  constructor(getGame,storage,hooks={}){this.getGame=getGame;this.storage=storage;this.hooks=hooks;this.paused=false;this.locked=false;this.states={};this.logs=[];this.next={};this.clicks=0;this.picked=0;this.disposed=false;this.hist={};this.ledger={};this.marketTick=null;this.lastBackup=Date.now();this.lastCast=0;this.godzamokBuff=null;this.rebuy=[];this.protectedSnapshot=null;
-  let saved;try{saved=JSON.parse(storage.getItem(SETTINGS)||'null');if(saved?.schema>2)throw Error('设置来自更新版本');this.c=saved?C.config(saved,true):C.migrate(JSON.parse(storage.getItem('cookie-pilot:settings:v1')||'{}'));const h=JSON.parse(storage.getItem(HISTORY)||'{}');if(h&&typeof h==='object'){this.hist=h.hist||{};this.ledger=h.ledger||{};this.historyContext=h.context;}}
+  this.actions=0;
+  this.runningMs=0;
+  this.lastPulse=0;
+  this.throttled=false;
+  this.clickSample={at:Date.now(),total:0,rate:0};
+  this.bridgedTarget='';
+  this.startupHold=false;
+  let saved;try{saved=JSON.parse(storage.getItem(SETTINGS)||'null');if(saved?.schema>2)throw Error('设置来自更新版本');this.c=saved?C.config(saved):C.migrate(JSON.parse(storage.getItem('cookie-pilot:settings:v1')||'{}'));const h=JSON.parse(storage.getItem(HISTORY)||'{}');if(h&&typeof h==='object'){this.hist=h.hist||{};this.ledger=h.ledger||{};this.historyContext=h.context;}
+   this.paused=storage.getItem(PAUSE)==='true';
+   this.startupHold=!this.paused&&!this.c.remember&&C.AUTO.some(key=>this.c[key]);
+   if(this.startupHold)this.paused=true;
+  }
   catch(e){this.c=C.config();this.paused=true;this.log('设置恢复失败：'+e.message);}
   this.savedVersion=saved?.version||'1';
  }
  get g(){return this.getGame();}
  env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:C.AUTO.some(k=>this.c[k])&&!this.locked};}
  set(update){this.c=C.config({...this.c,...update});this.persist();this.hooks.change?.();}
+ setPaused(value){
+  this.paused=value;
+  this.startupHold=false;
+  this.lastPulse=0;
+  try{this.storage.setItem(PAUSE,String(value));}
+  catch(e){this.paused=true;this.log('暂停设置保存失败：'+e.message);return false;}
+  this.log(value?'手动暂停自动化':'继续自动化，按当前游戏状态重新检查');
+  return true;
+ }
  persist(){try{this.storage.setItem(SETTINGS,JSON.stringify({...this.c,version:C.VERSION}));}catch(e){this.paused=true;this.log('设置保存失败，自动化已暂停：'+e.message);}}
- log(text){this.logs.unshift({at:Date.now(),text});this.logs.length=Math.min(this.logs.length,120);this.hooks.log?.(text);}
+ log(text,actions=0){this.actions+=actions;this.logs.unshift({at:Date.now(),text});this.logs.length=Math.min(this.logs.length,120);this.hooks.log?.(text);}
  state(k,text){this.states[k]=text;return false;}
  backups(){try{const rows=JSON.parse(this.storage.getItem(BACKUPS)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&typeof x.save==='string'&&Number.isFinite(x.at)).slice(0,15):[];}catch{return[];}}
  backup(label='手动备份',pin=false){const g=this.g;if(!C.ready(g)||g.OnAscend||g.AscendTimer>0)throw Error('游戏未就绪或正在转生');const save=g.WriteSave(1);if(typeof save!=='string'||!save.length||save.length>2000000)throw Error('未取得有效存档');this.backupSerial=(this.backupSerial||0)+1;const entry={id:Date.now()+'-'+this.backupSerial,at:Date.now(),label,save,settings:structuredClone(this.c),pin,version:String(g.version)};const old=this.backups();const pinned=old.filter(x=>x.pin).slice(0,pin?4:5),normal=old.filter(x=>!x.pin).slice(0,9);this.storage.setItem(BACKUPS,JSON.stringify([entry,...pinned,...normal]));this.lastBackup=Date.now();return entry;}
- manualGate(){const reason=C.gate(this.g,this.c,{follower:false});if(reason)throw Error(reason);}
+ manualGate(){const reason=C.gate(this.g,this.c);if(reason)throw Error(reason);}
  attempt(k,fn){if(!this.c[k])return this.state(k,'已关闭');const reason=C.gate(this.g,this.c,this.env());if(reason)return this.state(k,reason);if(['noClick','both'].includes(this.c.challenge)&&k==='click')return this.state(k,'无点击挑战保护');if(['noUpgrade','both'].includes(this.c.challenge)&&['season','dragon'].includes(k))return this.state(k,'无升级挑战保护');try{return fn.call(this);}catch(e){this.c[k]=false;this.persist();this.state(k,'发生错误，已关闭');this.log(k+' 已停止：'+e.message);return false;}}
  click(now=performance.now()){this.attempt('click',()=>{if(C.veil(this.g,this.c))return this.state('click','面纱保护中');if(this.c.clickMode==='buff'&&!C.clickBuff(this.g))return this.state('click','等待点击增益');if(now<(this.next.click||0))return;this.next.click=now+1000/this.c.rate;const before=this.g.cookieClicks;this.g.ClickCookie();this.clicks+=Math.max(0,this.g.cookieClicks-before);this.state('click','运行中 · '+this.c.rate+' 次/秒目标');});}
+ persistMarket(){try{this.storage.setItem(HISTORY,JSON.stringify({hist:this.hist,ledger:this.ledger,context:this.historyContext}));}catch{}}
  sampleMarket(){const g=this.g,m=C.mini(g,'Bank');if(!m)return;const context=[g.startDate,g.Objects.Bank.level,g.dragonAura,g.dragonAura2].join(':');if(context!==this.historyContext){this.hist={};this.ledger={};this.marketTick=null;this.historyContext=context;}
-  const marker=m.tickT!==undefined?String(m.tickT):Math.floor(Date.now()/60000);if(this.marketTick!==null&&num(m.tickT)<num(this.marketTick)||this.marketTick===null||m.tickT===undefined&&marker!==this.marketTick){for(const q of m.goodsById){const rows=Array.isArray(this.hist[q.id])?this.hist[q.id]:[];rows.push(m.getGoodPrice(q));this.hist[q.id]=rows.filter(Number.isFinite).slice(-2000);}try{this.storage.setItem(HISTORY,JSON.stringify({hist:this.hist,ledger:this.ledger,context}));}catch{} }this.marketTick=marker;
+  const marker=m.tickT!==undefined?String(m.tickT):Math.floor(Date.now()/60000);if(this.marketTick!==null&&num(m.tickT)<num(this.marketTick)||this.marketTick===null||m.tickT===undefined&&marker!==this.marketTick){for(const q of m.goodsById){const rows=Array.isArray(this.hist[q.id])?this.hist[q.id]:[];rows.push(m.getGoodPrice(q));this.hist[q.id]=rows.filter(Number.isFinite).slice(-2000);}if(this.locked||!C.AUTO.some(key=>this.c[key]))this.persistMarket();}this.marketTick=marker;
  }
  pulse(now=Date.now()){
   if(this.disposed)return;
   if(C.ready(this.g)&&this.savedVersion!==C.VERSION&&!this.g.OnAscend&&!this.g.AscendTimer){try{this.backup('升级前设置与存档',true);this.savedVersion=C.VERSION;this.persist();this.log('已迁移至 '+C.VERSION);}catch(e){this.paused=true;this.state('system','迁移备份失败');}}
   this.sampleMarket();
-  for(const k of ['golden','wrath','deer'])this.attempt(k,()=>{if(C.veil(this.g,this.c))return this.state(k,'面纱保护中');const list=[...(this.g.shimmers||[])].filter(s=>!s.popped&&!s.dead&&(k==='deer'?s.type==='reindeer':s.type==='golden'&&!!s.wrath===(k==='wrath')));for(const s of list){s.pop();this.picked++;}this.state(k,list.length?'已拾取 '+list.length+' 个':'等待自然事件');});
-  this.attempt('fortune',()=>{if(this.g.TickerEffect?.type==='fortune'){this.g.tickerL?.click();this.log('收取 Fortune 新闻');}this.state('fortune','等待幸运新闻');});
+  const active=C.AUTO.some(key=>this.c[key])&&!C.gate(this.g,this.c,this.env());
+  const elapsed=now-this.lastPulse;
+  if(active&&this.lastPulse&&elapsed>0){
+   if(elapsed>1500){
+    if(!this.throttled)this.log('浏览器调度出现长间隔 · 按当前存档重新检查');
+    this.throttled=true;
+   }else{
+    if(this.throttled)this.log('浏览器调度恢复');
+    this.throttled=false;
+    this.runningMs+=elapsed;
+   }
+  }
+  this.lastPulse=active?now:0;
+  if(now-this.clickSample.at>=1000){
+   this.clickSample={at:now,total:this.clicks,rate:(this.clicks-this.clickSample.total)*1000/(now-this.clickSample.at)};
+  }
+  for(const [key,name] of [['golden','金饼干'],['wrath','愤怒饼干'],['deer','驯鹿']]){
+   this.attempt(key,()=>{
+    const g=this.g;
+    if(C.veil(g,this.c))return this.state(key,'面纱保护中');
+    const events=[...(g.shimmers||[])].filter(s=>!s.popped&&!s.dead&&(key==='deer'?s.type==='reindeer':s.type==='golden'&&!!s.wrath===(key==='wrath')));
+    let picked=0;
+    for(const event of events){
+     event.pop();
+    if(event.popped||event.dead||!g.shimmers?.includes(event))picked++;
+    }
+    if(picked){
+     this.picked+=picked;
+     this.log('拾取 '+name+' ×'+picked,picked);
+    }
+    return this.state(key,'等待自然事件');
+   });
+  }
+  this.attempt('fortune',()=>{
+   const g=this.g,effect=g.TickerEffect;
+   if(effect?.type==='fortune'&&g.tickerL?.click){
+    g.tickerL.click();
+    if(g.TickerEffect!==effect){this.picked++;this.log('收取幸运新闻',1);}
+   }
+   return this.state('fortune','等待幸运新闻');
+  });
   if(now>=(this.next.slow||0)){this.next.slow=now+1000;
    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]])this.attempt(k,fn);
   }
   if(C.ready(this.g)&&!this.g.OnAscend&&!this.g.AscendTimer&&!this.g.promptOn&&now-this.lastBackup>=this.c.backupMinutes*60000){try{this.backup('自动快照');}catch(e){this.lastBackup=now;this.log('自动备份失败：'+e.message);}}
  }
- purchase(){const g=this.g,c=this.c;if(g.buyMode===-1)return this.state('purchase','商店处于出售模式');if(this.rebuy.length)return this.restoreBuildings();if(c.holdCombo&&C.clickBuff(g))return this.state('purchase','爆发期间保留资源');const all=C.purchases(g,c),best=c.purchaseMode==='target'?all.find(x=>x.id===c.target):all.find(x=>!x.blocked&&x.auto&&(!['noUpgrade','both'].includes(c.challenge)||x.id.startsWith('b:'))&&(x.gain>0||x.priority));if(!best)return this.state('purchase','等待可评估候选或指定目标');if(best.blocked||!best.auto)return this.state('purchase','目标受保护，需要手动购买');if(!best.affordable)return this.state('purchase','等待 '+best.name+' · 缺 '+C.fmt(best.price+C.reserve(g,c)-g.cookies));
-  if(best.id.startsWith('u:')&&['noUpgrade','both'].includes(c.challenge))return this.state('purchase','无升级挑战保护：目标升级已暂停');
-  if(best.id.startsWith('b:'))best.object.buy(best.qty);else best.object.buy();this.log('采购 '+best.name+' ×'+best.qty);this.state('purchase','已购买 '+best.name);
+ purchase(){
+  const g=this.g,c=this.c;
+  if(g.buyMode===-1)return this.state('purchase','商店处于出售模式');
+  if(this.rebuy.length)return this.restoreBuildings();
+  if(c.holdCombo&&C.clickBuff(g))return this.state('purchase','爆发期间保留资源');
+  if(c.purchaseMode==='plan'&&c.target.startsWith('u:')&&g.UpgradesById?.[Number(c.target.slice(2))]?.bought){
+   this.set({purchaseMode:'efficient',target:''});
+   return this.state('purchase','规划升级已完成，等待下一笔采购');
+  }
+  const plan=C.purchasePlan(g,c,{bridgedTarget:this.bridgedTarget});
+  const item=plan.next;
+  if(!item)return this.state('purchase',plan.reason);
+  const building=item.id.startsWith('b:');
+  const previous=building?item.object.amount:item.object.bought;
+  const balance=g.cookies;
+  if(building)item.object.buy(item.qty);
+  else item.object.buy();
+  const bought=building?Math.max(0,item.object.amount-previous):Number(!previous&&!!item.object.bought);
+  if(!bought)return this.state('purchase','游戏暂未确认购买 '+item.name);
+  const log= (plan.bridge?'过渡采购 ':'采购 ')+item.name+' ×'+bought+' · 花费 '+C.fmt(Math.max(0,balance-g.cookies))+' · 剩余 '+C.fmt(g.cookies);
+  this.log(log,1);
+  if(plan.bridge)this.bridgedTarget=plan.target.id;
+  else if(this.bridgedTarget===item.id)this.bridgedTarget='';
+  if(!plan.bridge&&c.purchaseMode==='plan'&&item.id===c.target&&bought>=item.qty)this.set({purchaseMode:'efficient',target:''});
+  return this.state('purchase','已购买 '+item.name);
  }
- harvest(){const info=C.garden(this.g),c=this.c;if(!info)return this.state('harvest','农场升至 1 级解锁花园');if(info.m.freeze)return this.state('harvest','花园已冻结');for(const t of info.cells){if(!t.unlocked||!t.p||!t.mature||c.protectedTiles.includes(t.key))continue;const seedNew=!t.p.unlocked;if(!seedNew&&c.gardenMode==='seeds')continue;if(!seedNew&&c.plant&&[c.seedA,c.seedB].includes(t.p.key)&&c.replantLayout!=='fill')continue;if(!seedNew&&c.gardenMode==='buff'&&C.cpsBuff(this.g)<c.harvestBuff)continue;info.m.harvest(t.x,t.y);this.log('收获 '+t.p.name+(seedNew?' · 新种子':''));return this.state('harvest','已收获 '+t.p.name);}return this.state('harvest','等待成熟植物；保护格与亲本保留');}
- plant(){const info=C.garden(this.g),c=this.c;if(!info)return this.state('plant','花园未解锁');if(info.m.freeze)return this.state('plant','花园已冻结');const planned=C.layout(this.g,c);const bank=C.reserve(this.g,c),budget=Math.max(0,this.g.cookies-bank)*c.gardenSpend/100;let used=0,done=0;for(const t of planned){if(t.p||!t.seed||c.protectedTiles.includes(t.key))continue;const p=info.m.plants[t.seed];if(!p?.unlocked||p.plantable===false)continue;const cost=info.m.getCost(p);if(!Number.isFinite(cost)||used+cost>budget||this.g.cookies-cost<bank)continue;if(info.m.plot[t.y][t.x][0]!==0)continue;if(info.m.useTool(p.id,t.x,t.y)){used+=cost;done++;}if(done>=3)break;}this.state('plant',done?'补种 '+done+' 格':'等待空格、种子或种植预算');}
- trade(){const data=C.market(this.g,this.hist),c=this.c;if(!data)return this.state('trade','银行升至 1 级解锁股市');if(c.holdCombo&&C.clickBuff(this.g))return this.state('trade','爆发期间暂停交易');const budget=Math.max(0,this.g.cookies-C.reserve(this.g,c))*c.marketBudget/100;for(const r of data.goods){const q=r.q,t=c.marketThresholds[q.id],custom=t&&t.buy<t.sell;const low=custom?r.price<=t.buy:r.samples>=c.marketMinSamples&&r.percentile<=c.marketBuy;const high=custom?r.price>=t.sell:r.samples>=c.marketMinSamples&&r.percentile>=c.marketSell;const lot=this.ledger[q.id];if(lot&&lot.stock!==q.stock)delete this.ledger[q.id];const basis=this.ledger[q.id]?.cost;
-   if(high&&q.stock>0&&Number.isFinite(basis)&&r.price>=basis*(1+c.marketProfit/100)&&q.last!==1){if(data.m.sellGood(q.id,q.stock)){delete this.ledger[q.id];this.log('股市卖出 '+q.name+' @ $'+C.fmt(r.price));return this.state('trade','已卖出 '+q.name);}}
-   const n=Math.min(c.marketCap-q.stock,r.capacity-q.stock,Math.floor(budget/(r.buyCost||Infinity)));
-   if(low&&q.stock===0&&q.last!==2&&n>0&&data.m.buyGood(q.id,n)){this.ledger[q.id]={stock:q.stock,cost:r.price*data.overhead};this.log('股市买入 '+q.name+' ×'+n);return this.state('trade','已买入 '+q.name);}
-  }this.state('trade','等待样本/阈值；不接管成本未知的已有仓位');}
- cast(){const g=this.g,c=this.c,m=C.mini(g,'Wizard tower');if(!m)return this.state('cast','巫师塔升至 1 级解锁魔法书');const s=m.spells[c.spell];if(!s)return this.state('cast','请选择有效法术');if(Date.now()-this.lastCast<c.castCooldown*1000)return this.state('cast','施法冷却中');if(C.veil(g,c))return this.state('cast','面纱保护中');const cost=m.getSpellCost(s);if(m.magic-cost<c.magicReserve)return this.state('cast','魔力不足，约 '+C.time(C.manaSeconds(m,cost+c.magicReserve,g.fps)));if(m.getFailChance(s)*100>c.maxFail)return this.state('cast','反噬概率超过上限');if(c.castCondition==='full'&&m.magic<m.magicM-.01)return this.state('cast','等待满魔力');if(c.castCondition==='frenzy'&&C.cpsBuff(g)<7)return this.state('cast','等待至少 7 倍生产增益');if(c.castCondition==='click'&&!C.clickBuff(g))return this.state('cast','等待点击增益');
-  if(c.prediction&&c.predictOnlyGood&&c.spell==='hand of fate'){const p=C.forecast(g,1)[0];if(!p||!p.good)return this.state('cast','预测不符合策略，等待手动推进法术序列');}
-  // Spontaneous edifice may spend cookies; reserve is checked conservatively.
-  if(c.spell==='spontaneous edifice'){const max=Math.max(0,...g.ObjectsById.map(o=>o.getPrice()));if(g.cookies-max/2<C.reserve(g,c))return this.state('cast','保留线不足以覆盖建筑法术');}
-  this.backup('施法前');this.lastCast=Date.now();if(m.castSpell(s)){this.log('施放 '+s.name);this.state('cast','已施法');}else this.state('cast','游戏拒绝施法');
+ harvest(){
+  const g=this.g,c=this.c,info=C.garden(g);
+  if(!info)return this.state('harvest','农场升至 1 级解锁花园');
+  if(info.m.freeze)return this.state('harvest','花园已冻结');
+  const tile=C.harvestTargets(g,c,info).find(t=>t.mature);
+  if(!tile)return this.state('harvest','等待成熟植物；保护格与亲本保留');
+  const locked=!tile.p.unlocked;
+  info.m.harvest(tile.x,tile.y);
+  if(info.m.plot[tile.y][tile.x][0]!==0)return this.state('harvest','游戏暂未确认收获');
+  this.log('收获 '+C.tileName(tile)+' '+tile.p.name+(locked&&tile.p.unlocked?' · 解锁新种子':''),1);
+  return this.state('harvest','已收获 '+tile.p.name);
  }
- lump(){const g=this.g;if(!g.canLumps?.())return this.state('lump','糖块尚未解锁');const remain=(g.lumpRipeAge-(Date.now()-g.lumpT))/1000;if(remain>0)return this.state('lump','等待安全成熟 · '+C.time(remain));if(Date.now()-g.lumpT>=g.lumpOverripeAge)return this.state('lump','等待游戏自动掉落');this.backup('糖块收取前');g.clickLump();this.log('已收取成熟糖块');this.state('lump','等待下一颗糖块');}
- wrinkler(){const c=this.c,list=(this.g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);if(list.length<=c.wrinklerKeep)return this.state('wrinkler','保留 '+c.wrinklerKeep+' 只');const targets=list.filter(w=>!(c.protectShiny&&w.type===1)).sort((a,b)=>b.sucked-a.sucked);if(!targets.length)return this.state('wrinkler','闪光保护中');targets[0].hp=0;this.log('收取普通皱纹虫 · 约 '+C.fmt(C.wrinklerValue(this.g,targets[0])));this.state('wrinkler','等待游戏结算');}
- pet(){const g=this.g;if(!C.has(g,'Pet the dragon')||g.dragonLevel<4)return this.state('pet','等待解锁 Pet the dragon');if(g.specialTab!=='dragon')return this.state('pet','打开原游戏的龙面板后运行');if(['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear'].every(n=>C.has(g,n)||g.HasUnlocked?.(n)))return this.state('pet','本轮龙掉落已收集');g.ClickSpecialPic();this.state('pet','抚摸龙 · 每秒一次');}
- dragon(){const g=this.g;if(!C.has(g,'A crumbly egg'))return this.state('dragon','尚未获得龙蛋');if(g.dragonLevel>=Math.min(this.c.dragonMax,g.dragonLevels.length-1))return this.state('dragon','达到目标等级');const step=g.dragonLevels[g.dragonLevel];if(!step?.cost?.())return this.state('dragon','等待材料 · '+C.plain(step?.costStr?.()));if(g.dragonLevel<5&&g.cookies-1000000*2**g.dragonLevel<C.reserve(g,this.c))return this.state('dragon','龙升级受到库存保留线限制');this.backup('龙升级前');g.UpgradeDragon();this.log('龙升至 '+g.dragonLevel+' 级');this.state('dragon','升级完成');}
- pantheon(){const m=C.mini(this.g,'Temple');if(!m)return this.state('pantheon','神庙升至 1 级解锁');for(let slot=0;slot<3;slot++){const id=this.c.gods[slot];if(id<0||m.slot[slot]===id)continue;const god=m.godsById[id];if(!god)return this.state('pantheon','无效神灵');if(this.c.gods.filter(x=>x===id).length>1)return this.state('pantheon','同一神灵不能配置两次');if(m.swaps-1<this.c.swapReserve)return this.state('pantheon','等待调换次数，保留 '+this.c.swapReserve+' 次');this.backup('神灵调换前');if(m.dragGod&&m.hoverSlot&&m.dropGod){m.dragGod(god);m.hoverSlot(slot);m.dropGod();}else{m.useSwap(1);m.slotGod(god,slot);}this.log('设置神灵 '+god.name);return this.state('pantheon','已配置槽位 '+(slot+1));}this.state('pantheon','神灵方案已匹配');}
+ plant(){
+  const g=this.g,c=this.c,info=C.garden(g);
+  const {tiles,keep,budget,reason}=C.plantingPlan(g,c,info);
+  if(reason)return this.state('plant',reason);
+  let used=0;
+  const planted=[];
+  for(const tile of tiles){
+   const p=tile.plant,cost=info.m.getCost(p);
+   if(!Number.isFinite(cost)||used+cost>budget||g.cookies-cost<keep||info.m.plot[tile.y][tile.x][0]!==0)continue;
+   const before=g.cookies;
+   info.m.useTool(p.id,tile.x,tile.y);
+   if(info.m.plot[tile.y][tile.x][0]===p.id+1){
+    used+=Math.max(0,before-g.cookies);
+    planted.push(C.tileName(tile));
+   }
+   if(planted.length>=3)break;
+  }
+  if(planted.length)this.log('花园补种 '+planted.join('、')+' · 花费 '+C.fmt(used),planted.length);
+  return this.state('plant',planted.length?'补种 '+planted.length+' 格':'等待空格、种子或种植预算');
+ }
+ trade(){
+  const g=this.g,c=this.c,data=C.market(g,this.hist);
+  if(!data)return this.state('trade','银行升至 1 级解锁股市');
+  if(c.holdCombo&&C.clickBuff(g))return this.state('trade','爆发期间暂停交易');
+  const budget=Math.max(0,g.cookies-C.reserve(g,c))*c.marketBudget/100;
+  for(const row of data.goods){
+   const q=row.q,t=c.marketThresholds[q.id],custom=t&&t.buy<t.sell;
+   const sampled=row.samples>=c.marketMinSamples;
+   const low=custom?row.price<=t.buy:sampled&&row.percentile<=c.marketBuy;
+   const high=custom?row.price>=t.sell:sampled&&row.percentile>=c.marketSell;
+   const lot=this.ledger[q.id];
+   if(lot&&lot.stock!==q.stock){delete this.ledger[q.id];this.persistMarket();}
+   const basis=this.ledger[q.id]?.cost;
+   const units=q.stock;
+   if(high&&units>0&&Number.isFinite(basis)&&row.price>=basis*(1+c.marketProfit/100)&&q.last!==1&&data.m.sellGood(q.id,units)){
+    delete this.ledger[q.id];
+    this.persistMarket();
+    this.log('股市卖出 '+q.name+' ×'+units+' · 扣除买入手续费净额 $'+C.fmt((row.price-basis)*units),1);
+    return this.state('trade','已卖出 '+q.name);
+   }
+   const n=Math.min(c.marketCap-units,row.capacity-units,Math.floor(budget/(row.buyCost||Infinity)));
+   if(low&&units===0&&q.last!==2&&n>0&&data.m.buyGood(q.id,n)){
+    this.ledger[q.id]={stock:q.stock,cost:row.price*data.overhead};
+    this.persistMarket();
+    this.log('股市买入 '+q.name+' ×'+q.stock+' · 含费单价 $'+C.fmt(row.price*data.overhead),1);
+    return this.state('trade','已买入 '+q.name);
+   }
+  }
+  return this.state('trade','等待报价与样本');
+ }
+ cast(){
+  const {m,spell,seconds,reason}=C.castPlan(this.g,this.c,this.lastCast);
+  if(reason)return this.state('cast',reason+(Number.isFinite(seconds)?' · 约 '+C.time(seconds):''));
+  this.backup('施法前');
+  this.lastCast=Date.now();
+  if(!m.castSpell(spell))return this.state('cast','游戏拒绝施法');
+  this.log('施放 '+spell.name+' · 剩 '+C.fmt(m.magic)+' 魔力',1);
+  return this.state('cast','已施法');
+ }
+ lump(){
+  const g=this.g,window=C.lumpWindow(g);
+  if(!window)return this.state('lump','糖块尚未解锁');
+  if(window.remaining)return this.state('lump','等待安全成熟 · '+C.time(window.remaining));
+  if(window.overripe)return this.state('lump','等待游戏自动掉落');
+  const previous=g.lumpT,balance=g.lumps;
+  this.backup('糖块收取前');
+  const fresh=C.lumpWindow(g);
+  if(!fresh||fresh.remaining||fresh.overripe||g.lumpT!==previous)return this.state('lump','糖块周期已变化，重新检查');
+  g.clickLump();
+  if(g.lumpT===previous||g.lumps<=balance)return this.state('lump','游戏暂未确认收取');
+  this.log('安全收取 '+(g.lumps-balance)+' 颗糖块',1);
+  return this.state('lump','等待下一颗糖块');
+ }
+ wrinkler(){
+  const g=this.g,c=this.c,list=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
+  if(list.length<=c.wrinklerKeep)return this.state('wrinkler','保留 '+c.wrinklerKeep+' 只');
+  const target=list.filter(w=>!c.protectShiny||w.type!==1).sort((a,b)=>b.sucked-a.sucked)[0];
+  if(!target)return this.state('wrinkler','闪光保护中');
+  target.hp=0;
+  this.log('收取'+(target.type===1?'闪光':'普通')+'皱纹虫 · 估算 '+C.fmt(C.wrinklerValue(g,target))+' 饼干',1);
+  return this.state('wrinkler','等待游戏结算');
+ }
+ pet(){
+  const g=this.g;
+  if(!C.has(g,'Pet the dragon')||g.dragonLevel<4)return this.state('pet','等待解锁抚摸龙');
+  if(g.specialTab!=='dragon')return this.state('pet','打开原游戏的龙面板后运行');
+  const missing=['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear'].filter(name=>!C.has(g,name)&&!g.HasUnlocked?.(name));
+  if(!missing.length)return this.state('pet','本轮龙掉落已收集');
+  g.ClickSpecialPic();
+  const found=missing.filter(name=>C.has(g,name)||g.HasUnlocked?.(name));
+  if(found.length)this.log('龙掉落：'+found.map(name=>g.Upgrades[name]?.dname||name).join('、'),found.length);
+  return this.state('pet','抚摸龙 · 每秒一次');
+ }
+ dragon(){
+  const g=this.g,before=g.dragonLevel;
+  if(!C.has(g,'A crumbly egg'))return this.state('dragon','尚未获得龙蛋');
+  if(before>=Math.min(this.c.dragonMax,g.dragonLevels.length-1))return this.state('dragon','达到目标等级');
+  const step=g.dragonLevels[before];
+  if(!step?.cost?.())return this.state('dragon','等待材料 · '+C.plain(step?.costStr?.()));
+  if(before<5&&g.cookies-1000000*2**before<C.reserve(g,this.c))return this.state('dragon','龙升级受到库存保留线限制');
+  this.backup('龙升级前');
+  g.UpgradeDragon();
+  if(g.dragonLevel<=before)return this.state('dragon','等待游戏确认训练');
+  this.log('龙升至 '+g.dragonLevel+' 级',1);
+  return this.state('dragon','升级完成');
+ }
+ pantheon(){
+  const m=C.mini(this.g,'Temple'),c=this.c;
+  if(!m)return this.state('pantheon','神庙升至 1 级解锁');
+  for(let slot=0;slot<3;slot++){
+   const id=c.gods[slot];
+   if(id<0||m.slot[slot]===id)continue;
+   const god=m.godsById[id];
+   if(!god)return this.state('pantheon','无效神灵');
+   if(c.gods.filter(target=>target===id).length>1)return this.state('pantheon','同一神灵不能配置两次');
+   if(m.swaps-1<c.swapReserve)return this.state('pantheon','等待调换次数，保留 '+c.swapReserve+' 次');
+   this.backup('神灵调换前');
+   if(m.dragGod&&m.hoverSlot&&m.dropGod){m.dragGod(god);m.hoverSlot(slot);m.dropGod();}
+   else{m.useSwap(1);m.slotGod(god,slot);}
+   if(m.slot[slot]!==id)return this.state('pantheon','等待游戏确认神灵调换');
+   this.log('设置神灵 '+god.name+' · 剩余 '+m.swaps+' 次调换',1);
+   return this.state('pantheon','已配置槽位 '+(slot+1));
+  }
+  return this.state('pantheon','神灵方案已匹配');
+ }
  aura(){const g=this.g;for(let slot=0;slot<2;slot++){const target=this.c['aura'+slot],current=slot?g.dragonAura2:g.dragonAura;if(target<0||target===current)continue;if(!g.dragonAuras?.[target]||g.dragonLevel<target+4||slot===1&&g.dragonLevel<g.dragonLevels.length-1)return this.state('aura','目标光环或第二槽位未解锁');if(target!==0&&target===(slot?g.dragonAura:g.dragonAura2))return this.state('aura','两个槽位不能配置同一光环');this.backup('光环切换前');const highest=[...g.ObjectsById].reverse().find(o=>o.amount>0);if(highest)highest.sacrifice(1);if(slot)g.dragonAura2=target;else g.dragonAura=target;g.recalculateGains=1;this.log('光环切换 '+(g.dragonAuras[target].dname||g.dragonAuras[target].name));return this.state('aura','已切换光环');}this.state('aura','光环方案已匹配');}
- season(){const g=this.g,key=this.c.seasonTarget;if(!key||g.season===key)return this.state('season',key?'已处于目标季节':'请选择目标季节');const u=g.Upgrades?.[g.seasons?.[key]?.trigger];if(!u?.unlocked)return this.state('season','季节切换尚未解锁');if(g.cookies-u.getPrice()<C.reserve(g,this.c))return this.state('season','切换成本超过预算');this.backup('季节切换前');u.buy();this.log('切换季节 '+key);this.state('season','已请求季节切换');}
+ season(){
+  const g=this.g,key=this.c.seasonTarget;
+  if(!key||g.season===key)return this.state('season',key?'已处于目标季节':'请选择目标季节');
+  const season=g.seasons?.[key],upgrade=g.Upgrades?.[season?.trigger];
+  if(!upgrade?.unlocked)return this.state('season','季节切换尚未解锁');
+  if(g.cookies-upgrade.getPrice()<C.reserve(g,this.c))return this.state('season','切换成本超过预算');
+  this.backup('季节切换前');
+  upgrade.buy();
+  if(g.season!==key)return this.state('season','等待游戏确认季节切换');
+  this.log('切换季节 '+season.name,1);
+  return this.state('season','已切换季节');
+ }
  godzamok(){const g=this.g,c=this.c;if(this.rebuy.length)return this.restoreBuildings();const active=Object.values(g.buffs||{}).find(b=>num(b.multClick,1)>1);if(!active){this.godzamokBuff=null;return this.state('godzamok','等待点击爆发');}if(this.godzamokBuff===active)return this.state('godzamok','本次增益已执行');if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');const list=c.godzamokBuildings.map(id=>g.ObjectsById[Number(id)]).filter(Boolean).map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(x=>x.n>0);if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');const buyback=list.reduce((s,{o,n})=>s+o.getSumPrice(n),0);if(g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');this.backup('Godzamok 出售前',true);this.godzamokBuff=active;this.rebuy=list.map(({o})=>({id:o.id,target:o.amount}));for(const {o,n}of list)o.sell(n,1);this.log('Godzamok 出售已执行，开始回购');this.restoreBuildings();}
  restoreBuildings(){const g=this.g;if(g.buyMode===-1)return this.state('godzamok','等待退出出售模式后回购');const next=this.rebuy[0];if(!next)return;const o=g.ObjectsById[next.id],n=Math.max(0,next.target-o.amount);if(!n){this.rebuy.shift();return;}const cost=o.getSumPrice(n);if(g.cookies-cost<C.reserve(g,this.c))return this.state('godzamok','回购预算不足，采购等待');o.buy(n);if(o.amount>=next.target)this.rebuy.shift();this.state('godzamok',this.rebuy.length?'继续回购':'回购完成');}
  dispose(){this.disposed=true;}
 }
 const num=C.num;
-return{Engine,SETTINGS,BACKUPS,HISTORY};
+return{Engine,SETTINGS,BACKUPS,HISTORY,PAUSE};
 });
