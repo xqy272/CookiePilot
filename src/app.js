@@ -121,8 +121,8 @@ function magicPage(g,c){
     '</small><span class="'+(item.good?'good':'bad')+'">'+esc(item.label)+'</span></div>').join('')+'</div>':'')+
    note('预测以当前季节、场上金饼干、建筑数及龙飞状态为条件。')+btn('施法规则','open-rule','cast','ghost'));
  }else html+=empty('魔法书尚未解锁','巫师塔升至 1 级后显示魔力、法术和预测。');
- html+=block('万神殿',p?facts(slots.map((slot,i)=>[slot,p.godsById[p.slot[i]]?.name||'空']))+
-  note('当前剩余 '+p.swaps+' 次调换。')+btn('神灵规则','open-rule','pantheon','ghost'):
+ html+=block('万神殿',p?facts(slots.map((slot,i)=>[slot,C.plain(p.godsById[p.slot[i]]?.name)||'空']))+
+  note('剩余 '+p.swaps+' 次调换。')+btn('查看推荐阵容','open-rule','pantheon','ghost'):
   empty('万神殿尚未解锁','神庙升至 1 级后可设置神灵。'));
  return html+btn('出售与回购规则','open-rule','godzamok','ghost');
 }
@@ -195,12 +195,13 @@ const groups=[
  {id:'market',name:'股市',icon:'market',rules:['trade'],analysis:'market',link:'行情与持仓'},
  {id:'growth',name:'龙、季节与皱纹虫',short:'长期成长',icon:'growth',rules:['wrinkler','dragon','aura','pet','season'],analysis:'growth',link:'成长详情'},
  {id:'events',name:'点击与事件',icon:'spark',rules:['click','golden','deer','fortune','wrath']},
- {id:'supplies',name:'采购与糖块',icon:'buy',rules:['purchase','lump','lumpLevel']}
+ {id:'supplies',name:'采购与糖块',icon:'buy',rules:['purchase','lumpManaged','lump','lumpLevel']}
 ];
 const shortRules={
  harvest:'种子收获',plant:'按布局补种',cast:'条件施法',pantheon:'神灵调换',godzamok:'爆发出售与回购',
  trade:'条件交易',wrinkler:'皱纹虫收取',dragon:'龙训练',aura:'光环切换',pet:'抚摸龙',season:'季节切换',
- click:'自动连点',golden:'金饼干',deer:'驯鹿',fortune:'幸运新闻',wrath:'愤怒饼干',purchase:'自动采购',lump:'糖块收取',lumpLevel:'糖块升级'
+ click:'自动连点',golden:'金饼干',deer:'驯鹿',fortune:'幸运新闻',wrath:'愤怒饼干',purchase:'自动采购',
+ lump:'糖块收取',lumpLevel:'单栋升级',lumpManaged:'糖块托管'
 };
 const unlocks={
  harvest:['Farm','农场'],plant:['Farm','农场'],cast:['Wizard tower','巫师塔'],pantheon:['Temple','神庙'],
@@ -215,7 +216,17 @@ const challengeModes=[['none','不启用'],['noClick','无点击'],['noUpgrade',
 const slots=['钻石槽','红宝石槽','翡翠槽'];
 const selectedRules=new Map();
 const lumpReserveModes=[['adaptive','按存档推荐'],['custom','自定保留量']];
-let groupId='garden',planTab='purchase',inspectedPurchase='',lumpDraft=null;
+const lumpManagedModes=[['growth','解锁与成长'],['unlocks','只解锁小游戏']];
+const lumpViews=[['managed','持续托管'],['single','单栋升级']];
+const pantheonProfiles=[['auto','按当前挂机规则'],['idle','被动产量'],['click','持续连点'],['lumps','糖块成熟']];
+let groupId='garden',planTab='purchase',inspectedPurchase='',lumpDraft=null,lumpView='managed',pantheonProfile='auto';
+
+function currentRule(group,g){
+ const selected=selectedRules.get(group.id);
+ if(selected)return selected;
+ if(group.id==='magic'&&C.mini(g,'Temple')&&!C.mini(g,'Wizard tower'))return'pantheon';
+ return group.rules[0];
+}
 
 function activePage(){
  if(page==='queue')return'overview';
@@ -256,11 +267,21 @@ function lumpUpgradeReport(g,c,plan=C.lumpPlan(g,c)){
  if(plan.status==='waiting')return{label:'等预算',text:plan.reason};
  return{label:'待升级',text:plan.reason,tone:'good'};
 }
+function lumpManagedReport(g,c,plan=C.lumpRoutePlan(g,c)){
+ if(!c.lumpManaged)return{label:'未托管',text:'确认一次，按路线收取和分配'};
+ if(plan.status==='different-save')return{label:'需重新确认',text:plan.reason,tone:'warn'};
+ const gate=automationGate(g,c);
+ if(gate)return{label:'已暂停',text:gate,tone:'warn'};
+ if(plan.status==='protected')return{label:'分配受保护',text:plan.reason,tone:'warn'};
+ const labels={ready:'待升级',waiting:'等糖块',locked:'等解锁',building:'等建筑',holding:'储存中'};
+ return{label:labels[plan.status]||'等待',text:plan.reason,tone:['ready','holding'].includes(plan.status)?'good':''};
+}
 function ruleReport(g,c,key){
  const locked=ruleLock(g,key);
  if(locked)return{label:'未解锁',text:locked};
  if(key==='lumpLevel')return lumpUpgradeReport(g,c);
- if(!c[key])return{label:'已关闭',text:'规则已关闭'};
+ if(key==='lumpManaged')return lumpManagedReport(g,c);
+ if(!(key==='lump'?C.collectsLumps(g,c):c[key]))return{label:'已关闭',text:'规则已关闭'};
  const gate=automationGate(g,c);
  if(gate)return{label:'已暂停',text:gate,tone:'warn'};
  const state=engine.states[key]||'';
@@ -303,10 +324,10 @@ function ruleReport(g,c,key){
    text:cast.reason+(timed?' · 约 '+T(cast.seconds):'')};
  }
  if(key==='pantheon'){
-  const m=C.mini(g,'Temple');
-  if(c.gods.some((god,index)=>god>=0&&m.slot[index]!==god)&&m.swaps-1<c.swapReserve){
-   return{label:'保留次数',text:'剩 '+m.swaps+' 次调换 · 保留 '+c.swapReserve+' 次',tone:'warn'};
-  }
+  const plan=C.pantheonPlan(g,c.gods,c.swapReserve);
+  const labels={ready:'待调换',waiting:'等次数',matched:'已就位',protected:'保留次数',invalid:'需检查',unplanned:'待选阵容'};
+  return{label:labels[plan.status]||'等待',text:plan.reason+(plan.status==='waiting'&&Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):''),
+   tone:['invalid','protected'].includes(plan.status)?'warn':['ready','matched'].includes(plan.status)?'good':''};
  }
  if(key==='trade'&&!/^已(买入|卖出)/.test(state)){
   const goods=C.market(g,engine.hist).goods;
@@ -330,6 +351,25 @@ function purchaseControls(c){
   ${field('bulk','每次建筑数量','number',{min:1,max:100,step:1})}
   ${field('maxBuilding','单类建筑数量上限','number',{min:1,step:1})}
  </div><div class="check-list">${check('bridgePurchase','允许加快目标的过渡购买')}${check('holdCombo','点击爆发期间保留库存')}</div>`;
+}
+function pantheonRecommendation(g,c){
+ const advice=C.pantheonAdvice(g,c,pantheonProfile);
+ if(!advice)return'';
+ const plan=C.pantheonPlan(g,advice.gods,c.swapReserve);
+ const configured=c.pantheon&&c.gods.every((id,i)=>id===advice.gods[i]);
+ const moves=plan.moves?.length||0;
+ const budget=moves?'需调换 '+moves+' 次 · 现在可用 '+plan.swaps+' 次':'推荐阵容已就位';
+ return `<div class="pantheon-advice" aria-label="推荐神灵阵容">
+  ${select('pantheon-profile','推荐用途',pantheonProfiles,pantheonProfile)}
+  <h4>${esc(advice.title)}</h4>
+  ${note(esc(budget+(pantheonProfile==='lumps'?' · '+advice.reason:'')))}
+  <div class="actions">
+   ${btn(configured?'已设为挂机阵容':'按此阵容挂机','apply-pantheon','','primary',configured||!C.compatible(g))}
+   ${c.pantheon?btn('停止维持','stop-pantheon','','ghost'):''}
+  </div>
+  <ul class="spirit-list">${advice.picks.map(({slot,god,effect})=>`<li>
+   <strong>${slots[slot]} · ${esc(C.plain(god.name).split(',')[0])}</strong><small>${esc(effect)}</small></li>`).join('')}</ul>
+ </div>`;
 }
 const ruleConfig={
  harvest(g){
@@ -359,8 +399,9 @@ const ruleConfig={
  pantheon(g,c){
   const m=C.mini(g,'Temple');
   const options=[[-1,'不自动调整'],...m.godsById.map(god=>[god.id,god.name])];
-  return check('pantheon','保持神灵方案')+`<div class="fields">${slots.map((slot,i)=>select('god-'+i,slot,options,c.gods[i])).join('')}
-   ${field('swapReserve','至少保留调换次数','number',{min:0,max:3,step:1})}</div>`;
+  return pantheonRecommendation(g,c)+`<details class="advanced" data-state="custom-pantheon"><summary>自定义槽位</summary>
+   ${check('pantheon','保持已设定的阵容')}<div class="fields">${slots.map((slot,i)=>select('god-'+i,slot,options,c.gods[i])).join('')}
+   ${field('swapReserve','至少保留调换次数','number',{min:0,max:3,step:1})}</div></details>`;
  },
  godzamok(g,c){
   return check('godzamok','启用爆发出售与回购')+`<div class="fields">
@@ -401,11 +442,14 @@ const ruleConfig={
  fortune(){return check('fortune','领取幸运新闻');},
  wrath(){return check('wrath','拾取愤怒饼干');},
  purchase(g,c){return check('purchase','启用自动采购')+purchaseControls(c)+btn('打开采购规划','plan-tab','purchase','ghost');},
- lump(){return check('lump','完全成熟后自动收取')+btn('查看糖块规划','plan-tab','lumps','ghost');},
+ lump(g,c){return check('lump',C.managesLumps(g,c)?'停止托管后仍收取':'完全成熟后自动收取')+btn('查看糖块规划','sugar-plan','managed','ghost');},
+ lumpManaged(g,c){
+  return lumpManagedButton(g,c)+btn('查看托管路线','sugar-plan','managed','ghost');
+ },
  lumpLevel(g,c){
   const plan=C.lumpPlan(g,c);
   return (plan.object&&!['done','different-save'].includes(plan.status)?check('lumpLevel','执行此建筑的等级任务'):'')+
-   btn('打开糖块规划','plan-tab','lumps','ghost');
+   btn('打开单栋升级','sugar-plan','single','ghost');
  }
 };
 const descriptions={
@@ -427,7 +471,8 @@ const descriptions={
  wrath:'愤怒饼干可能触发负面效果。',
  purchase:'购买前核对保留线。规划目标完成一次后恢复按收益排序。',
  lump:'完全成熟后收取并开始下一轮生长。自然掉落由游戏结算。',
- lumpLevel:'逐级提升指定建筑，达标后结束任务。糖块收取由独立开关控制。'
+ lumpLevel:'逐级提升指定建筑，达标后结束任务。糖块收取由独立开关控制。',
+ lumpManaged:'成熟时收取，按路线升级，保留足够糖块后再花费。'
 };
 
 function contextRows(g,c,group,key){
@@ -447,12 +492,14 @@ function contextRows(g,c,group,key){
  }
  if(group.id==='magic'){
   const m=C.mini(g,'Wizard tower'),p=C.mini(g,'Temple');
+  if(key==='pantheon'&&p)return [['剩余调换',p.swaps+' / 3 次'],['预留次数',c.swapReserve+' 次'],
+   ...slots.map((slot,i)=>[slot,C.plain(p.godsById[p.slot[i]]?.name)||'空'])];
   const spell=m?.spells[c.spell];
   return [
    ['当前魔力',m?F(m.magic)+' / '+F(m.magicM):'巫师塔升至 1 级解锁'],
    ['施法消耗',spell?F(m.getSpellCost(spell))+' · 反噬 '+F(m.getFailChance(spell)*100)+'%':'待选择法术'],
    ['调换次数',p?p.swaps+' 次':'神庙升至 1 级解锁'],
-   ['钻石槽',p?.godsById[p.slot[0]]?.name||'空'],
+   ...slots.map((slot,i)=>[slot,C.plain(p?.godsById[p.slot[i]]?.name)||'空']),
    ...(engine.rebuy.length?[['组合回购','还剩 '+engine.rebuy.length+' 类待恢复']]:[])
   ];
  }
@@ -474,8 +521,8 @@ function contextRows(g,c,group,key){
  }
  const plan=key==='purchase'?C.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget}):null;
  const lump=C.lumpWindow(g),balance=C.lumpBalance(g);
- if(key==='lumpLevel'){
-  const target=C.lumpPlan(g,c);
+ if(key==='lumpLevel'||key==='lumpManaged'){
+  const target=key==='lumpManaged'?C.lumpRoutePlan(g,c):C.lumpPlan(g,c);
   return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],['最低保留',lumpCount(target.reserve??C.lumpBudget(g,c).reserve)],
    ...(target.object?[['等级目标',target.name+' '+target.current+' → '+target.target+' 级'],
     ['还需花费',lumpCount(target.totalCost)],...(target.shortfall?[['预算缺口',lumpCount(target.shortfall)]]:[])]:[])];
@@ -495,7 +542,7 @@ function unknownLots(market){
 }
 function rulesView(g,c){
  const group=groups.find(item=>item.id===groupId);
- const key=selectedRules.get(group.id)||group.rules[0];
+ const key=currentRule(group,g);
  const report=ruleReport(g,c,key);
  const locked=ruleLock(g,key);
  const action=group.analysis?btn(group.link,'navigate',group.analysis,'ghost'): '';
@@ -503,8 +550,8 @@ function rulesView(g,c){
   <div class="rule-layout">
    <section class="rule-card" aria-label="规则详情">
     <div class="card-title"><h3>${shortRules[key]}</h3>${tag(report.label,report.tone)}</div>
-    <p class="rule-reason" data-current-rule="${key}">${esc(report.text)}</p>
-    <p class="rule-copy">${esc(descriptions[key])}</p>
+    ${key==='pantheon'&&!locked?c.pantheon?`<p class="rule-reason">${esc(report.text)}</p>`:'':
+      `<p class="rule-reason" data-current-rule="${key}">${esc(report.text)}</p><p class="rule-copy">${esc(descriptions[key])}</p>`}
     ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):ruleConfig[key](g,c)}
    </section>
    <section class="rule-card" aria-label="玩法状态"><h3>游戏状态</h3>
@@ -532,13 +579,19 @@ function nextJobs(g,c){
   const cast=C.castPlan(g,c,engine.lastCast);
   if(cast.spell)add('cast','施放'+cast.spell.name,cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
  }
- if(c.lump){
+ if(c.pantheon){
+  const plan=C.pantheonPlan(g,c.gods,c.swapReserve);
+  const move=plan.moves?.[0];
+  if(move)add('pantheon',slots[move.slot]+'配置 '+C.plain(move.god.name).split(',')[0],plan.seconds,'消耗 1 次调换 · 保留 '+c.swapReserve+' 次');
+ }
+ if(C.collectsLumps(g,c)){
   const lump=C.lumpWindow(g);
   if(lump&&!lump.overripe)add('lump','安全收取糖块',lump.remaining,'等游戏判定完全成熟');
  }
- if(c.lumpLevel&&!['noUpgrade','both'].includes(c.challenge)){
-  const plan=C.lumpPlan(g,c);
-  if(['ready','waiting'].includes(plan.status))add('lumpLevel',plan.name+'升至 '+(plan.current+1)+' 级',plan.nextSeconds,
+ const lumpRule=c.lumpManaged?'lumpManaged':c.lumpLevel?'lumpLevel':'';
+ if(lumpRule&&!['noUpgrade','both'].includes(c.challenge)){
+  const plan=c.lumpManaged?C.lumpRoutePlan(g,c):C.lumpPlan(g,c);
+  if(['ready','waiting'].includes(plan.status))add(lumpRule,plan.name+'升至 '+(plan.current+1)+' 级',plan.nextSeconds,
    (plan.nextShortfall?'下一级还缺 '+lumpCount(plan.nextShortfall)+' · ':'消耗 '+lumpCount(plan.nextCost)+' · ')+
    '保留 '+lumpCount(plan.reserve)+' · 目标 '+plan.target+' 级');
  }
@@ -553,7 +606,7 @@ function nextJobs(g,c){
 function protections(g,c){
  if(automationGate(g,c))return[];
  const items=[];
- for(const key of ['harvest','plant','cast','pantheon','trade','godzamok','dragon','aura','wrinkler','season','click','purchase','lumpLevel']){
+ for(const key of ['harvest','plant','cast','pantheon','trade','godzamok','dragon','aura','wrinkler','season','click','purchase','lumpManaged','lumpLevel']){
   if(!c[key])continue;
   const report=ruleReport(g,c,key);
   if(report.tone==='warn')items.push({key,title:shortRules[key],text:report.text});
@@ -587,11 +640,39 @@ function activity(){
   <div><dt>生效点击</dt><dd>${F(engine.clicks,0)}</dd></div>
  </dl>`;
 }
+function nextSetup(g,c){
+ const temple=C.mini(g,'Temple');
+ if(temple&&temple.slot.every(id=>id<0)&&!c.gods.some(id=>id>=0)&&C.pantheonAdvice(g,c)){
+  return row('magic','万神殿可配置阵容','查看适合当前挂机方式的神灵和调换预算。',btn('看阵容','open-rule','pantheon','ghost'));
+ }
+ if(!c.harvest){
+  const seed=C.harvestTargets(g,{...c,gardenMode:'seeds'})[0];
+  if(seed?.mature)return row('leaf','花园有成熟的新种子',esc(C.tileName(seed)+' · '+seed.p.name),btn('看收获规则','open-rule','harvest','ghost'));
+ }
+ if(!c.lumpManaged&&!c.lumpLevel&&C.lumpBalance(g)!==null){
+  const {choice}=C.lumpRoutePlan(g,c);
+  if(choice?.level===1)return row('growth','糖块可用于'+esc(choice.label),esc(choice.reason),btn('看托管路线','sugar-plan','managed','ghost'));
+ }
+ if(!c.cast&&C.mini(g,'Wizard tower')){
+  return row('magic','魔法书可设置条件施法',esc(C.castPlan(g,c,engine.lastCast).reason||'当前法术已满足施放条件。'),btn('看施法规则','open-rule','cast','ghost'));
+ }
+ if(!c.trade){
+  const market=C.market(g,engine.hist);
+  if(market?.goods.length){
+   const ready=market.goods.filter(item=>item.samples>=c.marketMinSamples).length;
+   return row('market',ready?'股市已有可用价格样本':'股市正在积累报价',
+    ready?'已达到采样门槛的商品 '+ready+' 种，可先核对预算和手续费。':'每种商品积累 '+c.marketMinSamples+' 个样本后，可按分位交易。',
+    btn('看交易规则','open-rule','trade','ghost'));
+  }
+ }
+ return'';
+}
 function compactOverview(g,c){
  const status=runtimeState(g,c);
  const jobs=nextJobs(g,c);
  const [first,...rest]=protections(g,c);
  const enabled=C.AUTO.some(key=>c[key]);
+ const suggestion=nextSetup(g,c);
  return `<div class="overview">
   <div class="overview-heading"><h2>挂机总览</h2>${enabled?btn('查看队列','navigate','queue','ghost'):btn('配置日常挂机','preset','idle','primary')}</div>
   ${activity()}
@@ -602,6 +683,7 @@ function compactOverview(g,c){
   ${first?`<button type="button" class="guard-summary" data-action="open-rule" data-arg="${first.key}">
    ${I('shield')}<span><strong>${esc(first.title)}</strong> · ${esc(first.text)}</span>
    ${rest.length?`<small>另 ${rest.length} 项</small>`:I('chevron')}</button>`:''}
+  ${suggestion?`<section class="lump-advice" aria-label="建议下一步">${suggestion}</section>`:''}
   <div class="group-shortcuts" role="group" aria-label="玩法入口">${groups.map(group=>{
    const count=group.rules.filter(key=>c[key]).length;
    return btn(I(group.icon)+`<span>${esc(group.short||group.name)}</span><small>${count}/${group.rules.length}</small>`,'rule-group',group.id,count?'enabled':'');
@@ -738,7 +820,7 @@ function lumpEstimate(g,c,draft){
 }
 function lumpStatus(g,c,draft){
  const balance=C.lumpBalance(g),window=C.lumpWindow(g);
- const {reserve,baking,unlock}=C.lumpBudget(g,c,g.ObjectsById[draft.buildingId],draft.level);
+ const {reserve,baking,unlock}=C.lumpBudget(g,c,g.ObjectsById[draft?.buildingId],draft?.level);
  const cap=C.LUMP_BAKING_CAP;
  let explanation='';
  if(c.lumpReserveMode==='adaptive'){
@@ -755,7 +837,45 @@ function lumpStatus(g,c,draft){
   ['自然掉落',window?T(window.dropRemaining):'等待生长']
  ])+(explanation?note(esc(explanation)):'');
 }
+function lumpStatusCard(g,c,draft){
+ return `<section class="rule-card" aria-label="糖块状态">
+  <h3>糖块状态</h3>
+  <div id="lump-balances">${lumpStatus(g,c,draft)}</div>
+  <div class="fields">
+   ${select('lumpReserveMode','保留策略',lumpReserveModes)}
+   ${c.lumpReserveMode==='custom'?field('lumpReserve','最低保留量','number',{min:0,step:1}):''}
+  </div>
+  ${check('lump',C.managesLumps(g,c)?'停止托管后仍收取':'完全成熟后自动收取')}
+ </section>`;
+}
+function lumpManagedButton(g,c){
+ if(C.managesLumps(g,c))return btn('停止托管','stop-lump-managed');
+ return btn('开启持续托管','start-lump-managed','','primary',!C.compatible(g)||!g.fullDate);
+}
+function lumpManagedPlanning(g,c){
+ const plan=C.lumpRoutePlan(g,c);
+ const report=lumpManagedReport(g,c,plan);
+ const status=plan.choice?plan.reason+(plan.status==='waiting'&&Number.isFinite(plan.nextSeconds)?' · 约 '+T(plan.nextSeconds):''):plan.reason;
+ return `<div class="rule-layout plan-layout">
+  <section class="rule-card" aria-label="糖块托管">
+   <div class="card-title"><h3>糖块托管</h3>${tag(report.label,report.tone)}</div>
+   ${note('安全收取成熟糖块，按路线连续分配。')}
+   ${select('lumpManagedMode','分配路线',lumpManagedModes)}
+   <div class="route-next"><strong>${esc(plan.choice?.label||'当前状态')}</strong><p>${esc(status)}</p></div>
+   ${c.lumpManaged&&report.text!==plan.reason?note(esc(report.text)):''}
+   <div class="actions">${lumpManagedButton(g,c)}</div>
+   <details class="advanced" data-state="managed-scope"><summary>路线与花费范围</summary>
+    ${note('先用每次 1 颗解锁已拥有建筑的小游戏。优先支持已启用的玩法规则。')}
+    ${c.lumpManagedMode==='growth'?note('随后把农场逐级升到 9 级，并按当前办公室的要求和已购买的手套升级光标。'):''}
+    ${note('花费遵守右侧保留策略。当前目标全做完后，继续收取并储存。')}
+    ${note('托管花费仅用于建筑等级。')}
+   </details>
+  </section>
+  ${lumpStatusCard(g,c,plan.choice)}
+ </div>`;
+}
 function lumpPlanning(g,c){
+ if(lumpView==='managed')return lumpManagedPlanning(g,c);
  const openings=C.lumpOpenings(g,c),advice=C.lumpAdvice(g,c,openings);
  const draft=lumpSelection(g,c,advice),target=C.lumpPlan(g,c);
  const buildings=g.ObjectsById.filter(object=>object&&typeof object.levelUp==='function');
@@ -773,16 +893,7 @@ function lumpPlanning(g,c){
    </div>
    <div id="lump-estimate">${lumpEstimate(g,c,draft)}</div>
   </section>
-  <section class="rule-card" aria-label="糖块状态">
-   <h3>糖块状态</h3>
-   <div id="lump-balances">${lumpStatus(g,c,draft)}</div>
-   <div class="fields">
-    ${select('lumpReserveMode','保留策略',lumpReserveModes)}
-    ${c.lumpReserveMode==='custom'?field('lumpReserve','最低保留量','number',{min:0,step:1}):''}
-   </div>
-   ${check('lump','完全成熟后自动收取')}
-   ${C.lumpBalance(g)===null?note('累计烘焙满 10 亿后开始生长。'):''}
-  </section>
+  ${lumpStatusCard(g,c,draft)}
  </div>`+lumpRoutes(g,c,draft,openings);
 }
 function prestigePlanning(g,c){
@@ -832,10 +943,13 @@ function rememberPosition(){
 }
 function renderControls(){
  let html='';
- if(page==='planning')html=tabs(planTabs,planTab,'plan-tab','规划类型');
+ if(page==='planning'){
+  html=tabs(planTabs,planTab,'plan-tab','规划类型');
+  if(planTab==='lumps')html+=tabs(lumpViews,lumpView,'lump-view','糖块执行方式','rule-tabs');
+ }
  if(page==='automation'){
   const group=groups.find(item=>item.id===groupId);
-  const rule=selectedRules.get(groupId)||group.rules[0];
+  const rule=currentRule(group,engine.g);
   html=tabs(groups.map(({id,name,short})=>[id,short||name]),groupId,'rule-group','玩法分类')+
        tabs(group.rules.map(key=>[key,shortRules[key]]),rule,'rule-select','具体规则','rule-tabs');
  }
@@ -848,8 +962,8 @@ function renderControls(){
 function render(){
  if(destroyed)return;
  rememberPosition();
- const view=page==='automation'?[page,groupId,selectedRules.get(groupId)||groups.find(g=>g.id===groupId).rules[0]].join('/'):
-  page==='planning'?[page,planTab].join('/'):page;
+ const view=page==='automation'?[page,groupId,currentRule(groups.find(g=>g.id===groupId),engine.g)].join('/'):
+  page==='planning'?[page,planTab,planTab==='lumps'?lumpView:''].join('/'):page;
  const sameView=shownView===view;
  const focus=sameView?focusSelector(root.activeElement):'';
  const position=viewStates.get(view);
@@ -973,6 +1087,59 @@ function toggleProtection(key){
  const previous=engine.c.protectedTiles;
  engine.set({protectedTiles:previous.includes(key)?previous.filter(tile=>tile!==key):[...previous,key]});
 }
+function assignPantheon(){
+ const g=engine.g,c=engine.c,advice=C.pantheonAdvice(g,c,pantheonProfile);
+ if(!C.compatible(g)||!advice)return;
+ const saveId=g.fullDate;
+ const plan=C.pantheonPlan(g,advice.gods,c.swapReserve);
+ const moves=plan.moves?.length||0;
+ const waiting=Math.max(0,moves-plan.swaps);
+ ask('设为万神殿挂机阵容',{
+  rows:[...advice.picks.map(({slot,god})=>[slots[slot],C.plain(god.name).split(',')[0]]),
+   ['当前需要调换',moves+' 次'],['预留次数',c.swapReserve+' 次']],
+  message:[waiting?'其中 '+waiting+' 次等游戏恢复调换次数后执行。':'',
+   '会调换已有神灵以维持这些槽位，直到停止维持。',engine.paused?'点击「继续」后执行。':''].filter(Boolean).join('\n'),
+  button:'启用阵容'
+ },()=>{
+  const live=engine.g;
+  const fresh=C.pantheonPlan(live,advice.gods,engine.c.swapReserve);
+  if(!C.compatible(live)||live.fullDate!==saveId||fresh.m!==plan.m||
+     (fresh.moves?.length||0)>moves||engine.c.swapReserve!==c.swapReserve){
+   throw Error('神灵、存档或保留次数已变化，请重新确认');
+  }
+  engine.set({gods:advice.gods,pantheon:true});
+  engine.log('万神殿阵容 · '+advice.title+' · '+advice.picks.map(({god})=>C.plain(god.name).split(',')[0]).join('、'));
+  void lease();
+ });
+}
+function startLumpManaged(mode=engine.c.lumpManagedMode){
+ engine.syncLumpSettings();
+ const g=engine.g,c=engine.c,saveId=g.fullDate;
+ if(!C.compatible(g)||!Number.isSafeInteger(saveId)||saveId<=0){toast('等待受支持的存档加载');return;}
+ const {lumpReserveMode,lumpReserve}=c;
+ const proposed={...c,lumpManaged:true,lumpManagedSave:saveId,lumpManagedMode:mode};
+ const plan=C.lumpRoutePlan(g,proposed);
+ const reserve=C.lumpBudget(g,c).reserve;
+ ask('开启糖块持续托管',{
+  rows:[['收取','完全成熟后收取'],['分配路线',lumpManagedModes.find(([value])=>value===mode)[1]],
+   ['下一步',plan.choice?plan.choice.label+' · 下一级 '+lumpCount(plan.nextCost):plan.reason],
+   ['保留',c.lumpReserveMode==='custom'?lumpCount(reserve):'按存档推荐'],
+   ['路线完成后','继续收取并储存']],
+  message:[mode==='growth'?'依次解锁小游戏、扩建花园，再按办公室和手套门槛提升光标。':'每花 1 颗解锁一个已拥有建筑的小游戏。',
+   c.lumpReserveMode==='adaptive'?'获得 Sugar baking 后，通常保留 100 颗，解锁小游戏时可用 1 颗。':'',
+   c.lumpLevel?'当前单栋升级任务会暂停。':'',engine.paused?'点击「继续」后执行。':''].filter(Boolean).join('\n'),
+  button:'确认托管'
+ },()=>{
+  engine.syncLumpSettings();
+  const latest=engine.c;
+  if(!C.compatible(engine.g)||saveId!==engine.g.fullDate||latest.lumpReserveMode!==lumpReserveMode||latest.lumpReserve!==lumpReserve){
+   throw Error('存档或保留策略已变化，请重新确认');
+  }
+  engine.set({lumpManaged:true,lumpManagedMode:mode,lumpManagedSave:saveId,lumpLevel:false});
+  engine.log('已开启糖块持续托管 · '+lumpManagedModes.find(([value])=>value===mode)[1]);
+  void lease();
+ });
+}
 function assignLumpGoal(draft){
  const g=engine.g;
  engine.syncLumpSettings();
@@ -992,7 +1159,8 @@ function assignLumpGoal(draft){
   rows:[['执行范围','仅 '+plan.name+' · '+plan.current+' → '+plan.target+' 级'],
    ['预计总花费',lumpCount(plan.totalCost)],['每次升级后保留',lumpCount(plan.reserve)],['当前预算',shortfall],
    ['完成后','此升级任务结束']],
-  message:[replacing?'会替换当前的建筑升级任务。':'',engine.paused?'点击「继续」后检查预算。':progress].filter(Boolean).join('\n'),
+  message:[replacing?'会替换当前的建筑升级任务。':'',engine.c.lumpManaged?'开启此任务会停止糖块持续托管。':'',
+   engine.paused?'点击「继续」后检查预算。':progress].filter(Boolean).join('\n'),
   button:'安排升级'
  },()=>{
    engine.syncLumpSettings();
@@ -1002,7 +1170,7 @@ function assignLumpGoal(draft){
    }
    if(fresh.status==='done'){toast(fresh.reason);return;}
    lumpDraft=null;
-   engine.set({lumpGoal:goal,lumpLevel:true});
+   engine.set({lumpGoal:goal,lumpLevel:true,lumpManaged:false});
    engine.log('糖块挂机目标 · '+plan.name+' '+plan.target+' 级');
    void lease();
   });
@@ -1031,6 +1199,12 @@ root.addEventListener('change',event=>{
   const value=el.type==='checkbox'?el.checked:el.value;
   if(key.startsWith('god-')){
    const gods=[...engine.c.gods];gods[Number(key.slice(4))]=Number(value);engine.set({gods});return;
+  }
+  if(key==='pantheon-profile'){pantheonProfile=value;render();return;}
+  if(key==='lumpManagedMode'&&engine.c.lumpManaged){
+   el.value=engine.c.lumpManagedMode;
+   if(value!==el.value)startLumpManaged(value);
+   return;
   }
   if(key==='lumpReserve'&&el.value===''){el.value=engine.c.lumpReserve;return;}
   if(key==='lumpLevel'&&value===true){
@@ -1100,14 +1274,30 @@ root.addEventListener('click',async event=>{
   navigate('planning',actionSelector('plan-tab',arg));
   return;
  }
+ if(action==='sugar-plan'||action==='lump-view'){
+  planTab='lumps';
+  lumpView=arg;
+  navigate('planning',actionSelector('lump-view',arg));
+  return;
+ }
  if(action==='plan-unlock'||action==='lump-route'){
   const [id,level]=arg.split(':').map(Number);
   const object=action==='plan-unlock'?g.Objects?.[arg]:g.ObjectsById?.[id];
   if(!object)return;
   lumpDraft={buildingId:object.id,level:action==='plan-unlock'?Math.max(1,object.level+1):level};
   planTab='lumps';
+  lumpView='single';
   navigate('planning','#lump-target-level');
   $('lump-target-level')?.scrollIntoView({block:'nearest'});
+  return;
+ }
+ if(action==='apply-pantheon'){assignPantheon();return;}
+ if(action==='stop-pantheon'){engine.set({pantheon:false});engine.log('已停止维持神灵阵容');void lease();return;}
+ if(action==='start-lump-managed'){startLumpManaged();return;}
+ if(action==='stop-lump-managed'){
+  engine.set({lumpManaged:false});
+  engine.log('已停止糖块持续托管');
+  void lease();
   return;
  }
  if(action==='assign-lump'){assignLumpGoal(lumpSelection(g,c));return;}
@@ -1206,8 +1396,8 @@ function visibility(){
 }
 function syncStorage(event){
  if(event.key===E.SETTINGS){
-  const before=[engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve,engine.c.lumpReserveMode];
-  if(!engine.syncLumpSettings()||JSON.stringify(before)===JSON.stringify([engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve,engine.c.lumpReserveMode]))return;
+  const before=JSON.stringify(engine.c);
+  if(!engine.syncLumpSettings()||before===JSON.stringify(engine.c))return;
   void lease();
   if(engine.c.open&&!$('confirm').open)render();
   return;

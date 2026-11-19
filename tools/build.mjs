@@ -35,7 +35,7 @@ const header=`// ==UserScript==
 `;
 const userscript=header+'\n'+code;
 await write(`dist/${channel}.user.js`,userscript);await write(`dist/${channel}.meta.js`,header);await write('CookiePilot.user.js',userscript);await write('extension/pilot.bundle.js',code);
-await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'统一工作台尺寸与导航，重做总览和设置，明确糖块升级与采购目标的执行范围。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
+await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'加入万神殿阵容推荐与预算，以及糖块成熟收取和按路线连续分配的托管。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
 if(channel==='stable'){
   let mirror=false;try{const prior=JSON.parse(await read('dist/beta.json'));mirror=prior.version===version;}catch{mirror=true;}
   if(mirror){

@@ -253,6 +253,14 @@ button.danger { color: var(--bad); }
 .lump-advice { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding-inline: 9px; }
 .lump-advice .row { border-bottom: 0; }
 .lump-advice .row > svg { color: var(--accent); }
+.route-next { margin-block: 8px; padding: 8px; background: var(--soft); border-radius: 6px; font-size: 12px; }
+.route-next p { color: var(--muted); margin-top: 2px; }
+.pantheon-advice { display: grid; gap: 6px; margin-top: 6px; }
+.pantheon-advice h4 { margin: 0; font-size: 13px; }
+.pantheon-advice .note { margin-top: 0; }
+.spirit-list { margin: 0; padding: 0; list-style: none; }
+.spirit-list li { padding-block: 5px; border-block-start: 1px solid var(--line); font-size: 12px; }
+.spirit-list small { display: block; }
 .lump-routes { margin-top: 8px; }
 .lump-routes button.selected { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 .target-cost { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; margin: 10px 0 7px; font-size: 12px; font-variant-numeric: tabular-nums; }

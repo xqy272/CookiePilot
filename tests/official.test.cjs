@@ -13,6 +13,40 @@ for(const season of['','christmas','easter','halloween','valentines','fools'])fo
 test('garden adapter calls actual harvest and useTool functions with correct costs and seed unlocks',()=>{const g=make(),m=g.Objects.Farm.minigame;g.keys=[];m.harvests=0;m.harvestsTotal=0;m.unlockSeed=p=>{p.unlocked=1;return true;};const ctx=context(g,m);vm.runInContext(section(garden,'M.useTool=function','\n\t\tM.getTile='),ctx);vm.runInContext(section(garden,'M.harvest=function','\n\t\tM.unlockSeed='),ctx);const e=new Engine(()=>g,memory());e.locked=true;e.harvest();assert.equal(m.plants.bakeberry.unlocked,1);assert.equal(m.plot[4][3][0],0);e.set({gardenSpend:10,replantLayout:'fill'});const before=g.cookies;e.plant();assert.equal(before-g.cookies,30000);});
 test('market adapter uses official 2.058 price conversion, overhead and transaction lock',()=>{const g=make(),m=g.Objects.Bank.minigame,ctx=context(g,m);vm.runInContext(section(market,'M.buyGood=function','\n\t\tM.getRestingVal='),ctx);const e=new Engine(()=>g,memory());e.set({marketThresholds:{0:{buy:11,sell:30}},marketCap:5,marketBudget:100});e.locked=true;const before=g.cookies;e.trade();const q=m.goodsById[0];assert.equal(q.stock,5);assert.equal(before-g.cookies,10*(1+.2*.95**3)*g.cookiesPsRawHighest*5);q.val=40;const bank=g.cookies;e.trade();assert.equal(g.cookies,bank,'same tick sale must be blocked');q.last=0;e.trade();assert.equal(q.stock,0);assert.equal(g.cookies-bank,40*g.cookiesPsRawHighest*5);});
 test('pantheon adapter consumes swaps using official slot semantics',()=>{const g=make(),m=g.Objects.Temple.minigame,ctx=context(g,m);vm.runInContext(section(temple,'M.useSwap=function','\n\t\tM.dragging=false'),ctx);const e=new Engine(()=>g,memory());e.locked=true;e.set({gods:[0,1,2],swapReserve:1});e.pantheon();e.pantheon();e.pantheon();assert.equal(m.swaps,1);assert.deepEqual(m.slot,[0,1,-1]);});
+test('recommended Pantheon lineup agrees with the official drag, drop and swap recharge logic',()=>{
+ const g=make(),m=g.Objects.Temple.minigame,ctx=context(g,m);
+ const nodes=new Map(),bounds={left:0,right:10,top:0,bottom:10};
+ ctx.TopBarOffset=0;
+ ctx.l=id=>{
+  if(!nodes.has(id))nodes.set(id,{style:{},getBounds:()=>bounds,appendChild(){},parentNode:{insertBefore(){}}});
+  return nodes.get(id);
+ };
+ const now=Date.now();
+ ctx.Date={now:()=>ctx.now};
+ ctx.now=now;
+ m.lastSwapT=0;
+ vm.runInContext(section(temple,'M.useSwap=function','//external'),ctx);
+ vm.runInContext(section(temple,'M.logic=function','M.draw=function'),ctx);
+ g.owned.add('Kitten helpers');
+ const config=C.config({click:true,swapReserve:1});
+ const {gods}=C.pantheonAdvice(g,config,'click');
+ const e=new Engine(()=>g,memory());
+ e.set({gods});
+ e.pantheon();e.pantheon();
+ assert.deepEqual(m.slot,[gods[0],gods[1],-1]);
+ assert.equal(m.swaps,1);
+ assert.equal(m.dragging,false);
+ const cooldown=C.pantheonPlan(g,gods,1,now).seconds;
+ ctx.now=now+cooldown*1000-1;
+ m.logic();
+ assert.equal(m.swaps,1);
+ ctx.now++;
+ m.logic();
+ assert.equal(m.swaps,2);
+ e.pantheon();
+ assert.deepEqual(m.slot,gods);
+ assert.equal(m.swaps,1);
+});
 test('ClickCookie adapter preserves actual 50/s interval and game accounting',()=>{const g=make(),ctx=context(g,null);g.prefs={};g.autoclickerDetected=0;g.clicksThisSession=1;g.loseShimmeringVeil=()=>{};g.runModHook=()=>{};g.playCookieClickSound=()=>{};ctx.Date={now:()=>ctx.now};ctx.now=1000;vm.runInContext(section(main,'Game.ClickCookie=function','\n\t\tGame.mouseX=0;'),ctx);const e=new Engine(()=>g,memory());e.locked=true;e.set({click:true,rate:40});e.click(1000);assert.equal(g.cookieClicks,1);ctx.now=1010;g.ClickCookie();assert.equal(g.cookieClicks,1);ctx.now=1026;e.click(1026);assert.equal(g.cookieClicks,2);assert.equal(g.handmadeCookies,2*g.computedMouseCps);});
 test('ripe harvest treats an official zero-yield meaty sugar lump as a settled cycle',()=>{
  const g=make(),ctx=context(g,null),e=new Engine(()=>g,memory());

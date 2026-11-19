@@ -1,8 +1,8 @@
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='2.2.0', SUPPORTED='2.058';
-const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
+const VERSION='2.3.0', SUPPORTED='2.058';
+const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const LUMP_BAKING_CAP=100;
 const LUMP_UNLOCKS=[
  {building:'Temple',feature:'万神殿',rules:['pantheon','godzamok'],reason:'神灵可持续提供加成，适合挂机。'},
@@ -15,7 +15,8 @@ const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',o
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
 spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
-lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
+lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,lumpManagedSave:0,lumpManagedMode:'growth',
+wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
 godzamokBuildings:[],godzamokKeep:1,godzamokSell:100,seasonTarget:'',ascendTarget:365,heavenlyTarget:'',
 updateChannel:'stable',releaseBase:'https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist',updateCheck:true,backupMinutes:10,
 ...Object.fromEntries(AUTO.map(k=>[k,false]))};
@@ -32,6 +33,10 @@ function config(input={},startup=false){
  c.lumpReserve=Math.ceil(c.lumpReserve);
  c.lumpGoal=lumpGoal(input.lumpGoal);
  if(!c.lumpGoal?.saveId)c.lumpLevel=false;
+ if(Number.isSafeInteger(input.lumpManagedSave)&&input.lumpManagedSave>0)c.lumpManagedSave=input.lumpManagedSave;
+ c.lumpManaged=c.lumpManaged&&!!c.lumpManagedSave;
+ if(c.lumpManaged)c.lumpLevel=false;
+ if(input.lumpManagedMode==='unlocks')c.lumpManagedMode='unlocks';
  if(['adaptive','custom'].includes(input.lumpReserveMode))c.lumpReserveMode=input.lumpReserveMode;
  else if(c.lumpLevel||c.lumpReserve!==LUMP_BAKING_CAP)c.lumpReserveMode='custom';
  const enums={theme:['system','dark','light'],density:['comfortable','compact'],challenge:['none','noClick','noUpgrade','both'],clickMode:['always','buff'],reserveMode:['none','lucky','frenzy','custom'],purchaseMode:['efficient','target','plan'],gardenMode:['seeds','mature','buff'],replantLayout:['rows','checker','fill'],castCondition:['mana','full','frenzy','click'],updateChannel:['stable','beta'],seasonTarget:['','christmas','easter','halloween','valentines','fools']};
@@ -197,8 +202,7 @@ function lumpOpenings(g,c){
    owned,enabled:rules.some(key=>c[key])};
  }).filter(Boolean).sort((a,b)=>Number(b.owned)-Number(a.owned)||Number(b.enabled)-Number(a.enabled));
 }
-function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
- if(openings[0]?.owned)return openings[0];
+function lumpMilestones(g){
  const farm=g.Objects?.Farm,cursor=g.Objects?.Cursor,market=mini(g,'Bank');
  const office=market?.offices?.[market.officeLevel];
  const farmStep=farm?.amount>0&&farm.level>=1&&farm.level<FARM_TILES.length?{
@@ -214,6 +218,11 @@ function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
   buildingId:cursor.id,level:cursor.level+1,label:'提升光标点击加成',
   reason:'每个有效光标等级让手套的点击加成增加 5 个百分点，当前上限 '+clickCap+' 级。'
  }:null;
+ return{farmStep,officeStep,clickStep};
+}
+function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
+ if(openings[0]?.owned)return openings[0];
+ const {farmStep,officeStep,clickStep}=lumpMilestones(g);
  if((c.harvest||c.plant)&&farmStep)return farmStep;
  if(c.trade&&officeStep)return officeStep;
  if(c.click&&clickStep)return clickStep;
@@ -230,6 +239,22 @@ function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
  }
  return best?{buildingId:best.object.id,level:best.level,label:'提升'+(best.object.dname||best.object.name)+'产量',
   reason:'按当前各建筑的产量和下一级成本估算，每颗糖块在这里带来的建筑增产较高。'}:null;
+}
+const managesLumps=(g,c)=>c.lumpManaged&&c.lumpManagedSave===g?.fullDate;
+const collectsLumps=(g,c)=>c.lump||managesLumps(g,c);
+function lumpRoutePlan(g,c,now=Date.now()){
+ if(c.lumpManaged&&c.lumpManagedSave!==g.fullDate){
+  return{status:'different-save',reason:'存档已变化，请在当前存档重新开启托管'};
+ }
+ if(g.ascensionMode===1||['noUpgrade','both'].includes(c.challenge)){
+  return{status:'protected',reason:'挑战保护暂停糖块分配，成熟后仍可收取'};
+ }
+ if(lumpBalance(g)===null)return{status:'locked',reason:'累计烘焙满 10 亿后开始积攒糖块'};
+ const openings=lumpOpenings(g,c),{farmStep,officeStep,clickStep}=lumpMilestones(g);
+ const choice=openings.find(opening=>opening.owned)||(c.lumpManagedMode==='growth'&&(farmStep||officeStep||clickStep));
+ if(!choice)return openings.length?{status:'building',reason:openings[0].reason}:
+  {status:'holding',reason:'当前路线已达标，继续收取并积攒糖块'};
+ return{...lumpPlan(g,{...c,lump:true},choice,now),choice};
 }
 function lumpWindow(g,now=Date.now()){
  if(lumpBalance(g)===null||![g.lumpT,g.lumpRipeAge,g.lumpOverripeAge].every(Number.isFinite)||
@@ -273,14 +298,71 @@ function lumpPlan(g,c,targetGoal=c.lumpGoal,now=Date.now()){
  const secondsFor=count=>{
   if(!count)return 0;
   if(!window)return Infinity;
-  const first=c.lump&&!window.overripe?window.remaining:window.dropRemaining;
-  const interval=c.lump?window.ripeSeconds:window.dropSeconds;
+  const collect=collectsLumps(g,c);
+  const first=collect&&!window.overripe?window.remaining:window.dropRemaining;
+  const interval=collect?window.ripeSeconds:window.dropSeconds;
   return first+(count-1)*interval;
  };
  const budget={...plan,shortfall,nextShortfall,seconds:secondsFor(shortfall),nextSeconds:secondsFor(nextShortfall)};
  if(g.ascensionMode===1)return{...budget,status:'protected',reason:'当前挑战轮回暂停糖块升级'};
  if(nextShortfall)return{...budget,status:'waiting',reason:(reserve?'保留 '+fmt(reserve,0)+' 颗后，':'')+'下一级还缺 '+fmt(nextShortfall,0)+' 颗糖块'};
  return{...budget,status:'ready',reason:'可升至 '+(current+1)+' 级 · 消耗 '+fmt(nextCost,0)+' 颗糖块'};
+}
+function pantheonAdvice(g,c,profile='auto'){
+ const m=mini(g,'Temple');
+ if(!m?.gods)return null;
+ const canClick=!['noClick','both'].includes(c.challenge);
+ const clickProfile=canClick&&(profile==='click'||profile==='auto'&&c.click&&c.clickMode==='always');
+ const growLumps=profile==='lumps';
+ const onMultiple=Number.isFinite(g.BuildingsOwned)&&g.BuildingsOwned%10===0;
+ const kittensUseful=num(g.milkProgress)>0&&Object.keys(kittens).some(name=>has(g,name));
+ const supporting=[kittensUseful?'mother':'',onMultiple&&!growLumps?'order':''];
+ const priorities=growLumps?['order','industry',...supporting]:
+  clickProfile?['labor','industry',...supporting]:['industry',...supporting];
+ const gods=[-1,-1,-1];
+ const picks=priorities.filter(key=>m.gods[key]).slice(0,3).map((key,slot)=>{
+  const god=m.gods[key];
+  gods[slot]=god.id;
+  const nativeSlot=g.hasAura?.('Supreme Intellect')?Math.max(0,slot-1):slot;
+  const effect={
+   industry:'建筑产量 +'+[10,6,3][nativeSlot]+'%，金饼干与愤怒饼干间隔变长',
+   labor:'点击 +'+[15,10,5][nativeSlot]+'%，建筑产量 −'+[3,2,1][nativeSlot]+'%',
+   mother:'牛奶效果 +'+[10,5,3][nativeSlot]+'%，金饼干与愤怒饼干间隔变长',
+   order:'建筑总数是 10 的倍数时，糖块可提前 '+[60,40,20][nativeSlot]+' 分钟安全收取'
+  }[key];
+  return{slot,god,key,effect};
+ });
+ const title=growLumps?'加快糖块成熟':clickProfile?'提高持续连点收益':'提高被动产量';
+ const reason=growLumps&&!onMultiple?'当前共有 '+fmt(g.BuildingsOwned,0)+' 座建筑，凑到 10 的倍数时生效。':
+  clickProfile?'适合持续连点规则。':'适合靠建筑持续生产的挂机。';
+ return picks.length?{title,reason,gods,picks}:null;
+}
+function pantheonPlan(g,gods,keep,now=Date.now()){
+ const m=mini(g,'Temple');
+ if(!m)return{status:'locked',reason:'神庙升至 1 级解锁万神殿'};
+ const chosen=gods.filter(id=>id>=0);
+ if(!chosen.length)return{m,status:'unplanned',reason:'先选一套推荐阵容，或指定要保持的槽位'};
+ if(chosen.some(id=>!m.godsById[id])||new Set(chosen).size!==chosen.length){
+  return{m,status:'invalid',reason:'请为每个槽位选择不同的有效神灵'};
+ }
+ const slots=[...m.slot],moves=[];
+ for(let slot=0;slot<3;slot++){
+  const id=gods[slot];
+  if(id<0||slots[slot]===id)continue;
+  const previous=slots.indexOf(id);
+  if(previous>=0)slots[previous]=slots[slot];
+  slots[slot]=id;
+  moves.push({slot,god:m.godsById[id]});
+ }
+ const swaps=Math.max(0,m.swaps-keep),plan={m,moves,swaps};
+ if(!moves.length)return{...plan,status:'matched',reason:'当前神灵阵容已就位'};
+ if(m.dragging)return{...plan,status:'dragging',reason:'等待手动拖动神灵结束'};
+ if(swaps>0)return{...plan,status:'ready',seconds:0,reason:'可执行调换 · 尚需 '+moves.length+' 次'};
+ if(keep>=3)return{...plan,status:'protected',reason:'当前保留全部 3 次调换'};
+ const recovery=[16,4,1];
+ let wait=Number.isFinite(m.swapT)?Math.max(0,(m.swapT-now)/1000+recovery[m.swaps]*3600):Infinity;
+ for(let n=m.swaps+1;n<=keep;n++)wait+=recovery[n]*3600;
+ return{...plan,status:'waiting',seconds:wait,reason:'等待调换次数，保留 '+keep+' 次'};
 }
 function castPlan(g,c,lastCast,now=Date.now()){
  const m=mini(g,'Wizard tower');
@@ -341,5 +423,5 @@ function wrinklerValue(g,w){let v=w.sucked*1.1*(w.type===1?3:1)*(1+.2*aura(g,'Dr
 function prestige(g){const before=num(g.HowMuchPrestige?.(g.cookiesReset)),after=num(g.HowMuchPrestige?.(num(g.cookiesReset)+num(g.cookiesEarned)));return Math.max(0,Math.floor(after)-Math.floor(before));}
 function semver(s){if(!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/.test(s))throw Error('无效版本号');return s.split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):x);}
 function newer(a,b){const x=semver(a),y=semver(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];if(x.length===3||y.length===3)return x.length===3&&y.length>3;return (x[3]===y[3]?x[4]>y[4]:x[3]==='rc');}
-return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
+return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
 });

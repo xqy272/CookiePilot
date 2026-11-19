@@ -78,6 +78,7 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    temple.level=0;g.lumps=1;
    e.set({lumpReserveMode:'adaptive',lumpGoal:null,lumpLevel:false});
    page('planning');click('[data-action="plan-tab"][data-arg="lumps"]');
+   click('[data-action="lump-view"][data-arg="single"]');
    assert(workspace.querySelector('[aria-label="糖块分配建议"]').textContent.includes('解锁万神殿'),'没有默认建议');
    assert(/当前目标保留0 颗/.test(workspace.textContent),'初期目标仍有保留门槛');
    click('[data-action="assign-lump"]');
@@ -107,6 +108,7 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   try{
    e.set({lumpReserveMode:'custom',lumpReserve:100});
    page('planning');click(planButton);
+   click('[data-action="lump-view"][data-arg="single"]');
    click('details[data-state="lump-routes"] summary');
    click(`[data-action="lump-route"][data-arg="${farm.id}:9"]`);
    const field=root().getElementById('lump-target-level');
@@ -132,6 +134,58 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   }finally{
    farm.level=initialLevel;g.lumps=startLumps;g.lumpT=startTime;
    e.set({lump:false,lumpLevel:false,lumpGoal:null,lumpReserveMode:'adaptive'});
+  }
+ });
+ await test('糖块持续托管一次授权后跨小游戏继续执行',async()=>{
+  const workspace=root().getElementById('main'),{Temple,Farm}=g.Objects;
+  const previous={temple:Temple.level,farm:Farm.level,lumps:g.lumps,cycle:g.lumpT};
+  try{
+   Temple.level=Farm.level=0;g.lumps=1;g.lumpT=Date.now();
+   e.set({lump:false,lumpManaged:false,lumpLevel:false,lumpGoal:null,lumpReserveMode:'adaptive'});
+   page('planning');click('[data-action="plan-tab"][data-arg="lumps"]');
+   click('[data-action="lump-view"][data-arg="managed"]');
+   assert(workspace.querySelector('[aria-label="糖块托管"]').textContent.includes('解锁万神殿'),'托管未预览下一步');
+   click('[data-action="start-lump-managed"]');
+   const info=root().getElementById('confirm-text').textContent;
+   assert(info.includes('完全成熟后收取')&&info.includes('继续收取并储存')&&!e.c.lumpManaged,'托管未明确范围或未经确认启用');
+   click('#confirm-ok');await delay(1400);
+   assert(Temple.level===1&&Farm.level===0&&g.lumps===0&&e.c.lumpManaged,'托管未等待下一颗');
+   page('overview');click('[data-action="navigate"][data-arg="queue"]');
+   assert(/农场升至 1 级/.test(workspace.textContent),'第二个目标未进入队列');
+   g.lumpT=Date.now()-g.lumpRipeAge-100;
+   await delay(1400);
+   assert(Farm.level===1&&g.lumps===0&&e.c.lumpManaged,'没有自动收取并转到第二个目标');
+   page('planning');click('[data-action="stop-lump-managed"]');
+   assert(!e.c.lumpManaged&&!e.c.lump,'停止时托管的收取未退出');
+  }finally{
+   Temple.level=previous.temple;Farm.level=previous.farm;g.lumps=previous.lumps;g.lumpT=previous.cycle;
+   e.set({lumpManaged:false,lumpManagedSave:0});
+  }
+ });
+ await test('万神殿解锁后可从总览预览阵容并按次数预算应用',async()=>{
+  const panel=root().getElementById('main'),m=g.Objects.Temple.minigame;
+  const old={swaps:m.swaps,slots:[...m.slot],total:g.BuildingsOwned};
+  try{
+   g.BuildingsOwned=139;
+   e.set({pantheon:false,gods:[-1,-1,-1],swapReserve:2});
+   page('overview');
+   assert(panel.querySelector('[aria-label="建议下一步"]').textContent.includes('万神殿'),'解锁后总览没有引导');
+   click('[data-action="open-rule"][data-arg="pantheon"]');
+   const recommend=panel.querySelector('[aria-label="推荐神灵阵容"]');
+   assert(recommend.textContent.includes('Jeremy')&&recommend.textContent.includes('金饼干'),'未显示建议和代价');
+   const purpose=recommend.querySelector('[data-key="pantheon-profile"]');
+   purpose.value='lumps';purpose.dispatchEvent(new Event('change',{bubbles:true}));
+   assert(panel.textContent.includes('Rigidel')&&panel.textContent.includes('139'),'没有根据建筑总数解释糖块条件');
+   click('[data-action="apply-pantheon"]');
+   assert(!e.c.pantheon&&m.swaps===3&&root().getElementById('confirm-text').textContent.includes('需要调换2 次'),'预览已动用次数或未说明次数');
+   click('#confirm-ok');await delay(1400);
+   assert(m.slot[0]===m.gods.order.id&&m.swaps===2&&m.slot[1]===-1,'未应用阵容或动用了保留次数');
+   page('overview');click('[data-action="navigate"][data-arg="queue"]');
+   assert(/红宝石槽配置 Jeremy/.test(panel.textContent),'恢复调换后要做的事不在队列');
+  }finally{
+   g.BuildingsOwned=old.total;m.swaps=old.swaps;m.slot=old.slots;
+   for(const god of m.godsById)god.slot=m.slot.indexOf(god.id);
+   e.set({pantheon:false,gods:[-1,-1,-1],swapReserve:1});
   }
  });
  await test('20 次每秒连点与全局暂停',async()=>{e.set({click:true,rate:20});await delay(1300);const a=g.cookieClicks;await delay(1100);assert(g.cookieClicks-a>=15&&g.cookieClicks-a<=27,'实际频率 '+(g.cookieClicks-a));click('#pause');const b=g.cookieClicks;await delay(300);assert(g.cookieClicks===b,'暂停后仍点击');click('#pause');e.set({click:false});});

@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "2.2.0",
+  "version": "2.3.0",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "统一工作台尺寸与导航，重做总览和设置，明确糖块升级与采购目标的执行范围。",
+  "notes": "加入万神殿阵容推荐与预算，以及糖块成熟收取和按路线连续分配的托管。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.2.0/CookiePilot-v2.2.0.zip",
-  "sha256": "126403306f6b3b92891ed10268a2130ca317b06e70945b51c9666275ed07e8c0"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.3.0/CookiePilot-v2.3.0.zip",
+  "sha256": "aee12c17b0cdc2f6fe597b99ddbf72333399913c21d152e644963d1091fafba2"
 }
