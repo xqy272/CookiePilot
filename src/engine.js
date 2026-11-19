@@ -1,7 +1,7 @@
 (function(root,factory){const C=typeof module==='object'&&module.exports?require('./core.js'):root.CookiePilotCore2;const api=factory(C);if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotEngine2=api;})(globalThis,function(C){
 'use strict';
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
-const lumpKeys=['lumpGoal','lumpReserve','lumpLevel'];
+const lumpKeys=['lumpGoal','lumpReserveMode','lumpReserve','lumpLevel'];
 class Engine{
  constructor(getGame,storage,hooks={}){this.getGame=getGame;this.storage=storage;this.hooks=hooks;this.paused=false;this.locked=false;this.states={};this.logs=[];this.next={};this.clicks=0;this.picked=0;this.disposed=false;this.hist={};this.ledger={};this.marketTick=null;this.lastBackup=Date.now();this.lastCast=0;this.godzamokBuff=null;this.rebuy=[];this.protectedSnapshot=null;
   this.actions=0;
@@ -35,8 +35,8 @@ class Engine{
   try{
    const saved=JSON.parse(this.storage.getItem(SETTINGS));
    if(saved?.schema!==2)return null;
-   const {lumpGoal,lumpReserve,lumpLevel}=C.config(saved);
-   return{lumpGoal,lumpReserve,lumpLevel};
+   const settings=C.config(saved);
+   return Object.fromEntries(lumpKeys.map(key=>[key,settings[key]]));
   }catch{return null;}
  }
  syncLumpSettings(){

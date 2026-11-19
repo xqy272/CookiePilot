@@ -152,7 +152,7 @@ const layouts=[['rows','亲本行'],['checker','交错排列'],['fill','填满�
 const challengeModes=[['none','不启用'],['noClick','无点击'],['noUpgrade','无升级'],['both','无点击与无升级']];
 const slots=['钻石槽','红宝石槽','翡翠槽'];
 const selectedRules=new Map();
-const lumpUnlocks=[['Farm','花园'],['Wizard tower','魔法书'],['Temple','万神殿'],['Bank','股市']];
+const lumpReserveModes=[['adaptive','按存档推荐'],['custom','自定保留量']];
 let groupId='garden',planTab='purchase',shownView='',inspectedPurchase='',lumpDraft=null;
 
 function activePage(){
@@ -411,7 +411,7 @@ function contextRows(g,c,group,key){
  const lump=C.lumpWindow(g),balance=C.lumpBalance(g);
  if(key==='lumpLevel'){
   const target=C.lumpPlan(g,c);
-  return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],['最低保留',lumpCount(c.lumpReserve)],
+  return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],['最低保留',lumpCount(target.reserve??C.lumpBudget(g,c).reserve)],
    ...(target.object?[['等级目标',target.name+' '+target.current+' → '+target.target+' 级'],
     ['还需花费',lumpCount(target.totalCost)],...(target.shortfall?[['预算缺口',lumpCount(target.shortfall)]]:[])]:[])];
  }
@@ -596,12 +596,28 @@ function purchasePlanning(g,c){
  <details class="advanced"><summary>采购设置</summary>${check('purchase','启用自动采购')}${purchaseControls(c)}</details>`;
 }
 const lumpCount=value=>F(value,0)+' 颗';
-function lumpSelection(g,c){
+function lumpSelection(g,c,advice=C.lumpAdvice(g,c)){
+ if(lumpDraft)return lumpDraft;
+ const plan=C.lumpPlan(g,c);
+ if(plan.object&&plan.status!=='done')return c.lumpGoal;
+ if(advice)return advice;
  const object=g.Objects?.Farm||g.ObjectsById[0];
- return lumpDraft||c.lumpGoal||{buildingId:object.id,level:object.level+1};
+ return{buildingId:object.id,level:object.level+1};
 }
-function lumpRoutes(g,c,draft){
- const routes=lumpUnlocks.map(([building,label])=>[g.Objects?.[building],1,'解锁'+label]);
+function lumpAdviceRow(g,c,draft,advice){
+ if(!advice)return'';
+ const plan=C.lumpPlan(g,c,advice);
+ if(!plan.object)return'';
+ const saving=c.lumpReserveMode==='adaptive'&&plan.balance!==null&&plan.balance<plan.reserve;
+ const picked=draft.buildingId===advice.buildingId&&draft.level===advice.level;
+ const headline=saving?'先把库存攒到 '+lumpCount(plan.reserve):'建议下一步 · '+advice.label;
+ const detail=saving?'还差 '+lumpCount(Math.ceil(plan.reserve-plan.balance))+'，存满后可为「'+advice.label+'」继续积攒预算。':
+  '花费 '+lumpCount(plan.totalCost)+' · '+advice.reason;
+ return `<section class="lump-advice" aria-label="糖块分配建议">${row('growth',esc(headline),esc(detail),
+  picked?'':btn('查看建议','lump-route',advice.buildingId+':'+advice.level,'ghost'))}</section>`;
+}
+function lumpRoutes(g,c,draft,openings){
+ const routes=openings.map(({buildingId,level,label})=>[g.ObjectsById[buildingId],level,label]);
  routes.push([g.Objects?.Farm,9,'花园 6×6']);
  const market=C.mini(g,'Bank'),office=market?.offices?.[market.officeLevel];
  if(office?.cost)routes.push([g.Objects?.Cursor,office.cost[1],'股市办公室门槛']);
@@ -610,7 +626,8 @@ function lumpRoutes(g,c,draft){
   return btn(label+' · '+lumpCount(plan.totalCost),'lump-route',object.id+':'+level,
    draft.buildingId===object.id&&draft.level===level?'selected':'',!plan.object);
  });
- return buttons.length?`<div class="actions lump-routes" aria-label="常用糖块路线">${buttons.join('')}</div>`:'';
+ return buttons.length?`<details class="advanced"><summary>其他糖块路线</summary>
+  <div class="actions lump-routes" aria-label="常用糖块路线">${buttons.join('')}</div></details>`:'';
 }
 function lumpEstimate(g,c,draft){
  const plan=C.lumpPlan(g,c,{buildingId:draft.buildingId,level:draft.level});
@@ -619,10 +636,10 @@ function lumpEstimate(g,c,draft){
  const manual=C.lumpPlan(g,c,{buildingId:object.id,level:current+1});
  const goal=c.lumpGoal;
  const assigned=c.lumpLevel&&goal?.saveId===g.fullDate&&current>=goal.fromLevel&&goal.buildingId===object.id&&goal.level===target;
- const unlock=lumpUnlocks.find(([name])=>name===object.name);
+ const unlock=C.LUMP_UNLOCKS.find(item=>item.building===object.name);
  const effects=[];
- if(unlock&&current===0&&target>=1)effects.push('解锁'+unlock[1]);
- if(object.name==='Farm'&&current<9&&target>current)effects.push('花园扩至 '+[4,6,9,12,16,20,25,30,36][Math.min(target,9)-1]+' 格');
+ if(unlock&&current===0&&target>=1)effects.push('解锁'+unlock.feature);
+ if(object.name==='Farm'&&current<9&&target>current)effects.push('花园扩至 '+C.FARM_TILES[Math.min(target,9)-1]+' 格');
  const market=C.mini(g,'Bank'),office=market?.offices?.[market.officeLevel];
  if(object.name==='Cursor'&&office?.cost&&current<office.cost[1]&&target>=office.cost[1]){
   effects.push('达到股市办公室的等级要求，还需拥有 '+office.cost[0]+' 个光标');
@@ -630,28 +647,53 @@ function lumpEstimate(g,c,draft){
  if(current<10&&target>=10&&object.levelAchiev10&&!object.levelAchiev10.won){
   effects.push('解锁成就「'+(object.levelAchiev10.dname||object.levelAchiev10.name)+'」');
  }
+ let bakingChange='';
+ if(manual.status==='ready'&&C.has(g,'Sugar baking')){
+  const before=Math.min(C.LUMP_BAKING_CAP,manual.balance);
+  const after=Math.min(C.LUMP_BAKING_CAP,manual.balance-manual.nextCost);
+  if(after<before)bakingChange=note('升一级后糖块烘焙加成会从 +'+F(before)+'% 变为 +'+F(after)+'%。');
+ }
  return facts([
   ['当前等级',current+' 级'],
   ['下一级',plan.nextCost?lumpCount(plan.nextCost)+(plan.nextShortfall?' · 缺 '+lumpCount(plan.nextShortfall):''):'已达标'],
   ['到目标总花费',lumpCount(plan.totalCost)],
   ['目标预算',plan.status==='done'?'已达标':plan.balance===null?'等待糖块解锁':
    plan.shortfall?'缺 '+lumpCount(plan.shortfall)+(Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):''):'已备齐']
- ])+(effects.length?note(esc(effects.join(' · '))):'')+
+ ])+(effects.length?note(esc(effects.join(' · '))):'')+bakingChange+
   (plan.shortfall&&Number.isFinite(plan.seconds)?note('等待时间按每轮 1 颗和当前生长速度估算。'):'')+
   `<div class="actions lump-actions">
    ${btn(assigned?'已交给挂机':'交给挂机','assign-lump','','primary',assigned||plan.status==='done'||!C.compatible(g)||!g.fullDate)}
    ${btn('手动升 1 级','level',object.id,'',manual.status!=='ready'||!C.compatible(g))}
   </div>`;
 }
-function lumpPlanning(g,c){
+function lumpStatus(g,c,draft){
  const balance=C.lumpBalance(g),window=C.lumpWindow(g);
- const draft=lumpSelection(g,c),target=C.lumpPlan(g,c);
+ const {reserve,baking,unlock}=C.lumpBudget(g,c,g.ObjectsById[draft.buildingId],draft.level);
+ const cap=C.LUMP_BAKING_CAP;
+ let explanation='';
+ if(c.lumpReserveMode==='adaptive'){
+  if(!baking)explanation='尚未购买糖块烘焙，推荐保留 0 颗。';
+  else if(unlock)explanation='可用 1 颗解锁小游戏。其他升级保留 '+lumpCount(cap)+' 以维持满额加成。';
+  else explanation='糖块烘焙每颗提供 +1% 产量，保留 '+lumpCount(cap)+' 可维持满额。';
+ }
+ return facts([
+  ['库存',balance===null?'尚未解锁':lumpCount(balance)],
+  ['当前目标保留',lumpCount(reserve)],
+  ['可分配',balance===null?'—':lumpCount(Math.max(0,balance-reserve))],
+  ...(balance!==null&&baking?[['糖块烘焙加成','+'+F(Math.min(cap,balance))+'% 产量']]:[]),
+  ['安全收取',window?window.overripe?'等待自然掉落':T(window.remaining):'等待生长'],
+  ['自然掉落',window?T(window.dropRemaining):'等待生长']
+ ])+(explanation?note(esc(explanation)):'');
+}
+function lumpPlanning(g,c){
+ const openings=C.lumpOpenings(g,c),advice=C.lumpAdvice(g,c,openings);
+ const draft=lumpSelection(g,c,advice),target=C.lumpPlan(g,c);
  const buildings=g.ObjectsById.filter(object=>object&&typeof object.levelUp==='function');
  const active=c.lumpGoal?row('growth',target.object?esc(target.name+' '+target.current+' → '+target.target+' 级'):'糖块等级目标',
   esc(lumpUpgradeReport(g,c,target).text),`<div class="actions">
    ${btn('升级规则','open-rule','lumpLevel','ghost')}${btn('取消目标','cancel-lump','','ghost')}
   </div>`):'';
- return active+lumpRoutes(g,c,draft)+`<div class="rule-layout plan-layout">
+ return lumpAdviceRow(g,c,draft,advice)+active+`<div class="rule-layout plan-layout">
   <section class="rule-card" aria-label="等级目标">
    <h3>等级目标</h3>
    <div class="fields">
@@ -663,18 +705,15 @@ function lumpPlanning(g,c){
   </section>
   <section class="rule-card" aria-label="糖块状态">
    <h3>糖块状态</h3>
-   ${facts([
-    ['库存',balance===null?'尚未解锁':lumpCount(balance)],
-    ['可分配',balance===null?'—':lumpCount(Math.max(0,balance-c.lumpReserve))],
-    ['安全收取',window?window.overripe?'等待自然掉落':T(window.remaining):'等待生长'],
-    ['自然掉落',window?T(window.dropRemaining):'等待生长'],
-    ...(balance!==null&&C.has(g,'Sugar baking')?[['糖块烘焙加成','+'+Math.min(100,balance)+'% 产量']]:[])
-   ])}
-   ${field('lumpReserve','糖块最低保留量','number',{min:0,step:1})}
+   <div id="lump-balances">${lumpStatus(g,c,draft)}</div>
+   <div class="fields">
+    ${select('lumpReserveMode','保留策略',lumpReserveModes)}
+    ${c.lumpReserveMode==='custom'?field('lumpReserve','最低保留量','number',{min:0,step:1}):''}
+   </div>
    ${check('lump','完全成熟后自动收取')}
-   ${balance===null?note('累计烘焙满 10 亿后开始生长。'):''}
+   ${C.lumpBalance(g)===null?note('累计烘焙满 10 亿后开始生长。'):''}
   </section>
- </div>`;
+ </div>`+lumpRoutes(g,c,draft,openings);
 }
 function prestigePlanning(g,c){
  const gained=C.prestige(g),chips=gained+C.num(g.heavenlyChips),gap=Math.max(0,c.ascendTarget-gained);
@@ -835,6 +874,7 @@ function assignLumpGoal(draft){
     throw Error('存档、等级或保留量已变化，请重新确认');
    }
    if(fresh.status==='done'){toast(fresh.reason);return;}
+   lumpDraft=null;
    engine.set({lumpGoal:goal,lumpLevel:true});
    engine.log('糖块挂机目标 · '+plan.name+' '+plan.target+' 级');
    void lease();
@@ -846,6 +886,7 @@ root.addEventListener('input',event=>{
  const g=engine.g,c=engine.c;
  lumpDraft={buildingId:lumpSelection(g,c).buildingId,level:el.valueAsNumber};
  $('lump-estimate').innerHTML=lumpEstimate(g,c,lumpDraft);
+ $('lump-balances').innerHTML=lumpStatus(g,c,lumpDraft);
 });
 root.addEventListener('change',event=>{
  const el=event.target;
@@ -931,7 +972,7 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
   return;
  }
  if(action==='assign-lump'){assignLumpGoal(lumpSelection(g,c));return;}
- if(action==='cancel-lump'){engine.set({lumpGoal:null,lumpLevel:false});engine.log('已取消糖块等级目标');void lease();return;}
+ if(action==='cancel-lump'){lumpDraft=null;engine.set({lumpGoal:null,lumpLevel:false});engine.log('已取消糖块等级目标');void lease();return;}
  if(action==='preset'){preset(arg);return;}
  if(action==='update'){await checkUpdate();return;}
  if(action==='inspect-purchase'){inspectedPurchase=arg;render();return;}
@@ -1016,8 +1057,8 @@ function visibility(){
 }
 function syncStorage(event){
  if(event.key===E.SETTINGS){
-  const before=[engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve];
-  if(!engine.syncLumpSettings()||JSON.stringify(before)===JSON.stringify([engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve]))return;
+  const before=[engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve,engine.c.lumpReserveMode];
+  if(!engine.syncLumpSettings()||JSON.stringify(before)===JSON.stringify([engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve,engine.c.lumpReserveMode]))return;
   void lease();
   if(engine.c.open&&!$('confirm').open)render();
   return;

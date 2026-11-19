@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "2.1.1",
+  "version": "2.1.2",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "修复真实存档的规划台读取；加入糖块安全收取计时、建筑升级预算及挂机等级目标。",
+  "notes": "新增糖块分配建议。保留量按存档计算，支持第一颗解锁小游戏，并在获得糖块烘焙后保护产量加成。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.1.1/CookiePilot-v2.1.1.zip",
-  "sha256": "8f7fe67ed51306064b11055d5031a96e3d5f86d03e01c20a0ad02e2412530ca3"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.1.2/CookiePilot-v2.1.2.zip",
+  "sha256": "19de324a0635d322d9df7162e657ac4a956f3a5d5fc3dc11f745fd047833fa06"
 }

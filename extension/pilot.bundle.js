@@ -1,14 +1,22 @@
-/* Cookie Pilot 2.1.1 · MIT · bundled locally; no remote executable code. */
+/* Cookie Pilot 2.1.2 · MIT · bundled locally; no remote executable code. */
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='2.1.1', SUPPORTED='2.058';
+const VERSION='2.1.2', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
+const LUMP_BAKING_CAP=100;
+const LUMP_UNLOCKS=[
+ {building:'Temple',feature:'万神殿',rules:['pantheon','godzamok'],reason:'神灵可持续提供加成，适合挂机。'},
+ {building:'Farm',feature:'花园',rules:['harvest','plant'],reason:'尽早开始种植和培育种子。'},
+ {building:'Wizard tower',feature:'魔法书',rules:['cast'],reason:'开始蓄魔，可在合适的条件下施法。'},
+ {building:'Bank',feature:'股市',rules:['trade'],reason:'解锁交易、仓储和办公室。'}
+];
+const FARM_TILES=[4,6,9,12,16,20,25,30,36];
 const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',open:false,background:false,remember:false,ads:true,protectVeil:true,alerts:true,sound:false,rate:20,clickMode:'always',reserveMode:'none',reserve:0,holdCombo:true,purchaseMode:'efficient',bridgePurchase:false,target:'',blocked:[],maxBuilding:10000,bulk:1,
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
 spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
-lumpReserve:100,lumpGoal:null,wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
+lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
 godzamokBuildings:[],godzamokKeep:1,godzamokSell:100,seasonTarget:'',ascendTarget:365,heavenlyTarget:'',
 updateChannel:'stable',releaseBase:'https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist',updateCheck:true,backupMinutes:10,
 ...Object.fromEntries(AUTO.map(k=>[k,false]))};
@@ -25,6 +33,8 @@ function config(input={},startup=false){
  c.lumpReserve=Math.ceil(c.lumpReserve);
  c.lumpGoal=lumpGoal(input.lumpGoal);
  if(!c.lumpGoal?.saveId)c.lumpLevel=false;
+ if(['adaptive','custom'].includes(input.lumpReserveMode))c.lumpReserveMode=input.lumpReserveMode;
+ else if(c.lumpLevel||c.lumpReserve!==LUMP_BAKING_CAP)c.lumpReserveMode='custom';
  const enums={theme:['system','dark','light'],density:['comfortable','compact'],challenge:['none','noClick','noUpgrade','both'],clickMode:['always','buff'],reserveMode:['none','lucky','frenzy','custom'],purchaseMode:['efficient','target','plan'],gardenMode:['seeds','mature','buff'],replantLayout:['rows','checker','fill'],castCondition:['mana','full','frenzy','click'],updateChannel:['stable','beta'],seasonTarget:['','christmas','easter','halloween','valentines','fools']};
  for(const[k,values]of Object.entries(enums))if(values.includes(input[k]))c[k]=input[k];
  for(const k of ['seedA','seedB','target','spell','heavenlyTarget'])if(typeof input[k]==='string')c[k]=input[k].slice(0,150);
@@ -172,6 +182,56 @@ const tileName=tile=>String.fromCharCode(65+tile.y)+(tile.x+1);
 function lumpBalance(g){
  return g.canLumps?.()&&Number.isFinite(g.lumps)&&g.lumps>=0?g.lumps:null;
 }
+function lumpBudget(g,c,object,target){
+ const baking=has(g,'Sugar baking');
+ const unlock=object?.level===0&&target===1&&LUMP_UNLOCKS.some(item=>item.building===object.name);
+ const reserve=c.lumpReserveMode==='custom'?c.lumpReserve:baking&&!unlock?LUMP_BAKING_CAP:0;
+ return{reserve,baking,unlock};
+}
+function lumpOpenings(g,c){
+ return LUMP_UNLOCKS.map(({building,feature,rules,reason})=>{
+  const object=g.Objects?.[building];
+  if(!object||object.level!==0)return null;
+  const owned=object.amount>0;
+  return{buildingId:object.id,level:1,label:'解锁'+feature,
+   reason:owned?reason:'先购买一座'+(object.dname||object.name)+'，再解锁'+feature+'。',
+   owned,enabled:rules.some(key=>c[key])};
+ }).filter(Boolean).sort((a,b)=>Number(b.owned)-Number(a.owned)||Number(b.enabled)-Number(a.enabled));
+}
+function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
+ if(openings[0]?.owned)return openings[0];
+ const farm=g.Objects?.Farm,cursor=g.Objects?.Cursor,market=mini(g,'Bank');
+ const office=market?.offices?.[market.officeLevel];
+ const farmStep=farm?.amount>0&&farm.level>=1&&farm.level<FARM_TILES.length?{
+  buildingId:farm.id,level:farm.level+1,label:'扩建花园',
+  reason:'种植格从 '+FARM_TILES[farm.level-1]+' 增至 '+FARM_TILES[farm.level]+' 格，农场 9 级达到 6×6。'
+ }:null;
+ const officeStep=office?.cost&&cursor?.amount>=office.cost[0]&&cursor.level<office.cost[1]?{
+  buildingId:cursor.id,level:office.cost[1],label:'满足股市办公室的等级要求',
+  reason:'光标数量已达标，补足等级后可在股市升级办公室。'
+ }:null;
+ const clickCap=has(g,'Aura gloves')?(has(g,'Luminous gloves')?20:10):0;
+ const clickStep=cursor?.amount>0&&cursor.level<clickCap?{
+  buildingId:cursor.id,level:cursor.level+1,label:'提升光标点击加成',
+  reason:'每个有效光标等级让手套的点击加成增加 5 个百分点，当前上限 '+clickCap+' 级。'
+ }:null;
+ if((c.harvest||c.plant)&&farmStep)return farmStep;
+ if(c.trade&&officeStep)return officeStep;
+ if(c.click&&clickStep)return clickStep;
+ const milestone=farmStep||officeStep||clickStep||openings[0];
+ if(milestone)return milestone;
+
+ let best=null;
+ for(const object of g.ObjectsById||[]){
+  if(!object||!(object.amount>0)||!Number.isSafeInteger(object.level)||object.level<0)continue;
+  const total=num(object.storedTotalCps,num(object.storedCps)*object.amount);
+  const level=object.level+1;
+  const score=total/(100+object.level)/level;
+  if(score>(best?.score??0))best={object,level,score};
+ }
+ return best?{buildingId:best.object.id,level:best.level,label:'提升'+(best.object.dname||best.object.name)+'产量',
+  reason:'按当前各建筑的产量和下一级成本估算，每颗糖块在这里带来的建筑增产较高。'}:null;
+}
 function lumpWindow(g,now=Date.now()){
  if(lumpBalance(g)===null||![g.lumpT,g.lumpRipeAge,g.lumpOverripeAge].every(Number.isFinite)||
     g.lumpRipeAge<=0||g.lumpOverripeAge<=g.lumpRipeAge)return null;
@@ -202,7 +262,7 @@ function lumpPlan(g,c,targetGoal=c.lumpGoal,now=Date.now()){
  const current=object.level,target=goal.level,levels=Math.max(0,target-current),nextCost=levels?current+1:0;
  const totalCost=levels%2===0?(levels/2)*(nextCost+target):levels*(current+(levels+1)/2);
  if(!Number.isSafeInteger(totalCost))return{status:'invalid',reason:'目标等级超出可计算的糖块预算'};
- const name=object.dname||object.name,balance=lumpBalance(g),reserve=c.lumpReserve;
+ const name=object.dname||object.name,balance=lumpBalance(g),{reserve}=lumpBudget(g,c,object,target);
  const plan={object,name,current,target,nextCost,totalCost,balance,reserve};
  if(goal.saveId&&goal.saveId!==g.fullDate)return{...plan,status:'different-save',reason:'当前存档已变化，请重新确认目标'};
  if(current<goal.fromLevel)return{...plan,status:'different-save',reason:'建筑等级已回退，请重新确认目标'};
@@ -220,7 +280,7 @@ function lumpPlan(g,c,targetGoal=c.lumpGoal,now=Date.now()){
  };
  const budget={...plan,shortfall,nextShortfall,seconds:secondsFor(shortfall),nextSeconds:secondsFor(nextShortfall)};
  if(g.ascensionMode===1)return{...budget,status:'protected',reason:'当前挑战轮回暂停糖块升级'};
- if(nextShortfall)return{...budget,status:'waiting',reason:'下一级还缺 '+fmt(nextShortfall,0)+' 颗糖块'};
+ if(nextShortfall)return{...budget,status:'waiting',reason:(reserve?'保留 '+fmt(reserve,0)+' 颗后，':'')+'下一级还缺 '+fmt(nextShortfall,0)+' 颗糖块'};
  return{...budget,status:'ready',reason:'可升至 '+(current+1)+' 级 · 消耗 '+fmt(nextCost,0)+' 颗糖块'};
 }
 function castPlan(g,c,lastCast,now=Date.now()){
@@ -282,14 +342,14 @@ function wrinklerValue(g,w){let v=w.sucked*1.1*(w.type===1?3:1)*(1+.2*aura(g,'Dr
 function prestige(g){const before=num(g.HowMuchPrestige?.(g.cookiesReset)),after=num(g.HowMuchPrestige?.(num(g.cookiesReset)+num(g.cookiesEarned)));return Math.max(0,Math.floor(after)-Math.floor(before));}
 function semver(s){if(!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/.test(s))throw Error('无效版本号');return s.split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):x);}
 function newer(a,b){const x=semver(a),y=semver(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];if(x.length===3||y.length===3)return x.length===3&&y.length>3;return (x[3]===y[3]?x[4]>y[4]:x[3]==='rc');}
-return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,lumpBalance,lumpWindow,lumpPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
+return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
 });
 
 ;
 (function(root,factory){const C=typeof module==='object'&&module.exports?require('./core.js'):root.CookiePilotCore2;const api=factory(C);if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotEngine2=api;})(globalThis,function(C){
 'use strict';
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
-const lumpKeys=['lumpGoal','lumpReserve','lumpLevel'];
+const lumpKeys=['lumpGoal','lumpReserveMode','lumpReserve','lumpLevel'];
 class Engine{
  constructor(getGame,storage,hooks={}){this.getGame=getGame;this.storage=storage;this.hooks=hooks;this.paused=false;this.locked=false;this.states={};this.logs=[];this.next={};this.clicks=0;this.picked=0;this.disposed=false;this.hist={};this.ledger={};this.marketTick=null;this.lastBackup=Date.now();this.lastCast=0;this.godzamokBuff=null;this.rebuy=[];this.protectedSnapshot=null;
   this.actions=0;
@@ -323,8 +383,8 @@ class Engine{
   try{
    const saved=JSON.parse(this.storage.getItem(SETTINGS));
    if(saved?.schema!==2)return null;
-   const {lumpGoal,lumpReserve,lumpLevel}=C.config(saved);
-   return{lumpGoal,lumpReserve,lumpLevel};
+   const settings=C.config(saved);
+   return Object.fromEntries(lumpKeys.map(key=>[key,settings[key]]));
   }catch{return null;}
  }
  syncLumpSettings(){
@@ -628,7 +688,7 @@ return{Engine,SETTINGS,BACKUPS,HISTORY,PAUSE};
 });
 
 ;
-window.CookiePilotStyles2=":host {\n  all: initial;\n  color-scheme: dark;\n  --bg: #19231d;\n  --surface: #212f27;\n  --soft: #2a3930;\n  --fg: #eef2e8;\n  --muted: #afc0b1;\n  --line: #3c5044;\n  --accent: #b4ddb9;\n  --accent-bg: #30483a;\n  --on-accent: #15291e;\n  --warm: #f2cf97;\n  --warm-bg: #493a24;\n  --bad: #f5b7a6;\n  --pad: 14px;\n  color: var(--fg);\n  font: 14px/1.5 \"Segoe UI\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif;\n}\n:host([data-theme=light]) {\n  color-scheme: light;\n  --bg: #f7f7ef;\n  --surface: #fffef9;\n  --soft: #eeefe6;\n  --fg: #213128;\n  --muted: #536458;\n  --line: #dce3d6;\n  --accent: #245943;\n  --on-accent: #fffefa;\n  --accent-bg: #e3eee0;\n  --warm: #76501c;\n  --warm-bg: #f6ecd7;\n  --bad: #a24434;\n}\n* { box-sizing: border-box; }\n[hidden] { display: none !important; }\nh1, h2, h3, p, dl, dd { margin: 0; }\nh2 { font-size: 24px; line-height: 1.2; font-weight: 650; letter-spacing: -.025em; }\nh3 { font-size: 14px; line-height: 1.35; font-weight: 650; }\nsmall, .muted { color: var(--muted); }\nsmall { font-size: 11px; }\na { color: var(--accent); text-underline-offset: 2px; }\nbutton, input, select, textarea { font: inherit; }\nbutton, a, input, select { touch-action: manipulation; }\nbutton {\n  cursor: pointer;\n  color: var(--fg);\n  background: var(--soft);\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  min-height: 30px;\n  padding: 5px 9px;\n  font-size: 12px;\n  text-align: start;\n}\nbutton:hover:not(:disabled) { background: var(--accent-bg); }\nbutton:disabled { cursor: default; opacity: .5; }\n:is(button,input,select,textarea,a,summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\nbutton svg { width: 15px; height: 15px; flex: 0 0 15px; }\nbutton.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 650; }\nbutton.primary:hover:not(:disabled) { filter: brightness(.92); background: var(--accent); }\nbutton.ghost { color: var(--accent); background: transparent; border-color: transparent; }\nbutton.danger { color: var(--bad); }\n\n.backdrop {\n  position: fixed;\n  inset: 0;\n  display: grid;\n  place-items: center;\n  padding: 12px;\n  background: #09140f69;\n  pointer-events: auto;\n}\n.window {\n  width: min(600px, 100%);\n  max-height: calc(100dvh - 24px);\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 13px;\n  box-shadow: 0 18px 65px #09140f73;\n}\n.head, .workbench-nav { background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }\n.head { min-height: 44px; padding: 5px var(--pad); display: flex; align-items: center; gap: 6px; }\n.head .grow { flex: 1; }\n.wordmark { font-size: 14px; font-weight: 700; white-space: nowrap; }\n.brand-icon {\n  flex: 0 0 25px;\n  height: 25px;\n  display: grid;\n  place-items: center;\n  border-radius: 7px;\n  background: var(--accent-bg);\n  color: var(--accent);\n}\n.brand-icon svg { width: 17px; height: 17px; }\n.head-action { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }\n.workbench-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; padding-inline: var(--pad); }\n.nav, .category-tabs button {\n  border: 0;\n  border-radius: 0;\n  border-bottom: 2px solid transparent;\n  background: transparent;\n  color: var(--muted);\n  padding: 5px 7px 6px;\n  min-height: 34px;\n  white-space: nowrap;\n}\n.nav[aria-current=page], .category-tabs button[aria-pressed=true] {\n  color: var(--accent);\n  border-color: var(--accent);\n  font-weight: 650;\n}\n.main {\n  min-height: 0;\n  padding: 14px var(--pad) 15px;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  scrollbar-width: thin;\n  scrollbar-color: var(--line) transparent;\n}\n.rule-heading, .heading, .card-title, .block-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 5px 9px;\n  flex-wrap: wrap;\n}\n.rule-heading, .heading { margin-bottom: 11px; }\n.heading p { margin-top: 5px; font-size: 12px; color: var(--muted); }\n.rule-heading button { min-height: 27px; }\n.category-tabs, .rule-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }\n.category-tabs { border-bottom: 1px solid var(--line); margin-bottom: 10px; }\n.category-tabs button { margin-bottom: -1px; padding-inline: 5px; }\n.rule-tabs { margin: 0 0 10px; }\n.rule-tabs button[aria-pressed=true] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 650; }\n.rule-layout { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 10px; align-items: start; }\n.rule-card {\n  min-width: 0;\n  background: var(--surface);\n  border: 1px solid var(--line);\n  border-radius: 10px;\n  padding: 11px 12px;\n}\n.rule-card .check { min-height: 31px; }\n.rule-copy, .rule-reason { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.rule-reason { margin-top: 5px; }\n.rule-copy { margin: 7px 0 5px; }\n.facts { margin-top: 7px; }\n.facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 9px; border-top: 1px solid var(--line); padding: 8px 0; font-size: 12px; }\n.facts dt { color: var(--muted); flex: 0 1 auto; }\n.facts dd { font-weight: 600; text-align: end; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; min-width: 0; }\n.tag { display: inline-flex; border-radius: 5px; padding: 2px 6px; font-size: 11px; background: var(--soft); color: var(--muted); white-space: nowrap; }\n.tag.good { background: var(--accent-bg); color: var(--accent); }\n.tag.warn { background: var(--warm-bg); color: var(--warm); }\n.overview { display: grid; gap: 9px; }\n.overview .card-title .ghost { padding: 2px 4px; min-height: 27px; }\n.run-summary {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  flex-wrap: wrap;\n  gap: 4px 11px;\n  border: 1px solid #496655;\n  border-radius: 8px;\n  background: linear-gradient(105deg,#19362b,#2c4c3d);\n  color: #f1f5e8;\n  padding: 8px 9px;\n}\n.run-label { display: flex; align-items: center; gap: 8px; }\n.run-label svg { flex: 0 0 25px; width: 25px; height: 25px; border-radius: 6px; padding: 5px; background: #3a5a49; color: #d6edc7; }\n.run-label strong { display: block; font-size: 14px; line-height: 1.25; }\n.run-label small, .run-counts { color: #d1dfd3; font-size: 11px; }\n.run-counts b { color: #f1f5e8; }\n.next-job {\n  display: grid;\n  grid-template-columns: minmax(0,1fr) auto auto;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-height: 33px;\n  border: 0;\n  background: transparent;\n  border-radius: 0;\n  padding: 5px 3px;\n  color: var(--fg);\n}\n.next-job + .next-job { border-top: 1px solid var(--line); }\n.next-job :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.next-job .eta { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }\n.next-job svg { color: var(--accent); }\n.guard-summary {\n  width: 100%;\n  display: grid;\n  grid-template-columns: auto minmax(0,1fr) auto;\n  align-items: center;\n  gap: 7px;\n  background: var(--warm-bg);\n  color: var(--warm);\n  border-color: transparent;\n}\n.guard-summary:hover:not(:disabled) { background: var(--warm-bg); filter: brightness(.94); }\n.guard-summary small { color: inherit; white-space: nowrap; }\n.group-shortcuts { border-top: 1px solid var(--line); padding-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; }\n.group-shortcuts button { display: flex; gap: 5px; align-items: center; min-height: 28px; padding: 4px 6px; font-size: 11px; }\n.group-shortcuts small { font-variant-numeric: tabular-nums; }\n.queue-empty { color: var(--muted); font-size: 12px; }\n.queue-empty button { margin-inline-start: 6px; }\n.queue-card + .queue-card { margin-top: 10px; }\n.queue-card h3 { margin-bottom: 5px; }\n\n.plan-layout { margin-top: 11px; }\n.lump-routes { margin-top: 8px; }\n.lump-routes button.selected { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }\n.lump-actions { margin-top: 7px; }\n.candidates { margin-top: 6px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }\n.candidate {\n  width: 100%;\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 5px;\n  border: 0;\n  border-top: 1px solid var(--line);\n  background: transparent;\n  border-radius: 0;\n}\n.candidate :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.candidate[aria-pressed=true] { background: var(--accent-bg); box-shadow: inset 2px 0 var(--accent); }\n.rule-card > .field { margin-top: 6px; }\n.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }\n.block { margin-top: 16px; }\n.block-head { margin-bottom: 7px; }\n.block-head > span { font-size: 11px; color: var(--muted); }\n.row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }\n.row > svg { width: 15px; height: 15px; color: var(--muted); flex: 0 0 15px; }\n.row-info { flex: 1 1 auto; min-width: 0; }\n.row strong { font-size: 13px; }\n.row p, .note { margin-top: 3px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.note { margin-top: 8px; }\n.summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }\n.summary .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }\n.summary label { color: var(--muted); font-size: 11px; }\n.cols, .fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }\n.fields { margin: 7px 0; }\n.field { display: grid; align-content: start; gap: 3px; min-width: 0; }\n.field > span { color: var(--muted); font-size: 11px; }\ninput[type=text], input[type=number], input[type=url], select, textarea {\n  min-width: 0;\n  width: 100%;\n  color: var(--fg);\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 6px;\n  padding: 5px 7px;\n  font-size: 12px;\n}\nselect option { background: var(--surface); color: var(--fg); }\n.check { display: flex; align-items: center; gap: 7px; min-height: 29px; font-size: 12px; cursor: pointer; }\n.check input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }\n.warning { font-size: 12px; color: var(--warm); background: var(--warm-bg); border-radius: 6px; padding: 8px; margin: 8px 0; }\n.empty { color: var(--muted); font-size: 12px; padding: 10px 0; }\n.empty svg { width: 22px; height: 22px; margin-bottom: 5px; color: var(--accent); }\n.table-wrap { overflow-x: auto; }\n.table { width: 100%; border-collapse: collapse; font-size: 12px; }\n.table th, .table td { padding: 7px 5px; border-bottom: 1px solid var(--line); vertical-align: middle; }\n.table th { color: var(--muted); font-weight: 400; text-align: start; white-space: nowrap; }\n.table td.num { text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }\n.table td small { display: block; }\n.chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0; }\n.chip { font-size: 11px; padding: 3px 6px; background: var(--soft); border-radius: 5px; }\n.garden { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 4px; max-width: 336px; margin-bottom: 7px; }\n.tile { aspect-ratio: 1; min-width: 0; min-height: 29px; padding: 0; position: relative; display: grid; place-content: center; justify-items: center; }\n.tile .symbol { font-size: 17px; line-height: 1.15; color: var(--accent); }\n.tile .plant-label { font-size: 9px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }\n.tile.mature { background: var(--accent-bg); }\n.tile.selected { border-color: var(--accent); }\n.tile.protected::after { content: \"·\"; position: absolute; color: var(--warm); font-size: 22px; line-height: 1; top: 0; right: 3px; }\n.tile-info { min-height: 38px; margin-bottom: 5px; }\n.log { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }\n.log time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }\n.advanced { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 7px; }\n.advanced summary { cursor: pointer; font-size: 13px; font-weight: 600; }\n.forecast, .collection { display: flex; gap: 5px; flex-wrap: wrap; margin: 7px 0; }\n.forecast > div, .collection span { padding: 4px 6px; border-radius: 5px; background: var(--soft); font-size: 11px; }\n.forecast span, .forecast small { display: block; }\n.forecast .good, .collection .owned { color: var(--accent); }\n.forecast .bad { color: var(--bad); }\n.numeric-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px 7px; }\n.toast {\n  position: fixed;\n  bottom: 18px;\n  left: 50%;\n  transform: translateX(-50%);\n  max-width: min(580px,calc(100vw - 22px));\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  box-shadow: 0 8px 24px #0005;\n  padding: 8px 12px;\n  pointer-events: auto;\n}\n.confirm {\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  max-width: min(430px,calc(100vw - 24px));\n  padding: 16px;\n  pointer-events: auto;\n}\n.confirm::backdrop { background: #0b1712ac; }\n.confirm p { margin: 9px 0 13px; white-space: pre-line; color: var(--muted); }\n.confirm .actions { justify-content: flex-end; }\n.entry {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n  min-height: 25px;\n  color: var(--accent);\n  background: var(--surface);\n  border-color: var(--line);\n  padding: 3px 7px;\n  font-size: 12px;\n  font-weight: 650;\n}\n.entry svg { width: 13px; height: 13px; flex-basis: 13px; }\n:host([data-density=compact]) .row { padding-block: 5px; }\n:host([data-density=compact]) .main { padding-block: 10px; }\n@media (max-width: 560px) {\n  .cols { grid-template-columns: minmax(0,1fr); }\n  .category-tabs button { padding-inline: 4px; }\n}\n@media (max-width: 500px) {\n  :host { --pad: 10px; }\n  .rule-layout { grid-template-columns: minmax(0,1fr); }\n  .backdrop { padding: 7px; }\n  .window { max-height: calc(100dvh - 14px); }\n  .head small { display: none; }\n  .workbench-nav { gap: 0 2px; }\n  .nav { padding-inline: 4px; }\n  .field :is(input,select) { font-size: 16px; }\n  .run-counts { margin-inline-start: 33px; }\n}\n@media (max-width: 360px) {\n  .fields { grid-template-columns: minmax(0,1fr); }\n  .head { gap: 4px; }\n}\n@media (pointer: coarse) {\n  :is(.head-action,.nav,.category-tabs button,.rule-tabs button,.check,.next-job,.group-shortcuts button,.guard-summary) {\n    min-height: 44px;\n  }\n}\n";
+window.CookiePilotStyles2=":host {\n  all: initial;\n  color-scheme: dark;\n  --bg: #19231d;\n  --surface: #212f27;\n  --soft: #2a3930;\n  --fg: #eef2e8;\n  --muted: #afc0b1;\n  --line: #3c5044;\n  --accent: #b4ddb9;\n  --accent-bg: #30483a;\n  --on-accent: #15291e;\n  --warm: #f2cf97;\n  --warm-bg: #493a24;\n  --bad: #f5b7a6;\n  --pad: 14px;\n  color: var(--fg);\n  font: 14px/1.5 \"Segoe UI\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif;\n}\n:host([data-theme=light]) {\n  color-scheme: light;\n  --bg: #f7f7ef;\n  --surface: #fffef9;\n  --soft: #eeefe6;\n  --fg: #213128;\n  --muted: #536458;\n  --line: #dce3d6;\n  --accent: #245943;\n  --on-accent: #fffefa;\n  --accent-bg: #e3eee0;\n  --warm: #76501c;\n  --warm-bg: #f6ecd7;\n  --bad: #a24434;\n}\n* { box-sizing: border-box; }\n[hidden] { display: none !important; }\nh1, h2, h3, p, dl, dd { margin: 0; }\nh2 { font-size: 24px; line-height: 1.2; font-weight: 650; letter-spacing: -.025em; }\nh3 { font-size: 14px; line-height: 1.35; font-weight: 650; }\nsmall, .muted { color: var(--muted); }\nsmall { font-size: 11px; }\na { color: var(--accent); text-underline-offset: 2px; }\nbutton, input, select, textarea { font: inherit; }\nbutton, a, input, select { touch-action: manipulation; }\nbutton {\n  cursor: pointer;\n  color: var(--fg);\n  background: var(--soft);\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  min-height: 30px;\n  padding: 5px 9px;\n  font-size: 12px;\n  text-align: start;\n}\nbutton:hover:not(:disabled) { background: var(--accent-bg); }\nbutton:disabled { cursor: default; opacity: .5; }\n:is(button,input,select,textarea,a,summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\nbutton svg { width: 15px; height: 15px; flex: 0 0 15px; }\nbutton.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 650; }\nbutton.primary:hover:not(:disabled) { filter: brightness(.92); background: var(--accent); }\nbutton.ghost { color: var(--accent); background: transparent; border-color: transparent; }\nbutton.danger { color: var(--bad); }\n\n.backdrop {\n  position: fixed;\n  inset: 0;\n  display: grid;\n  place-items: center;\n  padding: 12px;\n  background: #09140f69;\n  pointer-events: auto;\n}\n.window {\n  width: min(600px, 100%);\n  max-height: calc(100dvh - 24px);\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 13px;\n  box-shadow: 0 18px 65px #09140f73;\n}\n.head, .workbench-nav { background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }\n.head { min-height: 44px; padding: 5px var(--pad); display: flex; align-items: center; gap: 6px; }\n.head .grow { flex: 1; }\n.wordmark { font-size: 14px; font-weight: 700; white-space: nowrap; }\n.brand-icon {\n  flex: 0 0 25px;\n  height: 25px;\n  display: grid;\n  place-items: center;\n  border-radius: 7px;\n  background: var(--accent-bg);\n  color: var(--accent);\n}\n.brand-icon svg { width: 17px; height: 17px; }\n.head-action { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }\n.workbench-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; padding-inline: var(--pad); }\n.nav, .category-tabs button {\n  border: 0;\n  border-radius: 0;\n  border-bottom: 2px solid transparent;\n  background: transparent;\n  color: var(--muted);\n  padding: 5px 7px 6px;\n  min-height: 34px;\n  white-space: nowrap;\n}\n.nav[aria-current=page], .category-tabs button[aria-pressed=true] {\n  color: var(--accent);\n  border-color: var(--accent);\n  font-weight: 650;\n}\n.main {\n  min-height: 0;\n  padding: 14px var(--pad) 15px;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n  scrollbar-width: thin;\n  scrollbar-color: var(--line) transparent;\n}\n.rule-heading, .heading, .card-title, .block-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 5px 9px;\n  flex-wrap: wrap;\n}\n.rule-heading, .heading { margin-bottom: 11px; }\n.heading p { margin-top: 5px; font-size: 12px; color: var(--muted); }\n.rule-heading button { min-height: 27px; }\n.category-tabs, .rule-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }\n.category-tabs { border-bottom: 1px solid var(--line); margin-bottom: 10px; }\n.category-tabs button { margin-bottom: -1px; padding-inline: 5px; }\n.rule-tabs { margin: 0 0 10px; }\n.rule-tabs button[aria-pressed=true] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 650; }\n.rule-layout { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 10px; align-items: start; }\n.rule-card {\n  min-width: 0;\n  background: var(--surface);\n  border: 1px solid var(--line);\n  border-radius: 10px;\n  padding: 11px 12px;\n}\n.rule-card .check { min-height: 31px; }\n.rule-copy, .rule-reason { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.rule-reason { margin-top: 5px; }\n.rule-copy { margin: 7px 0 5px; }\n.facts { margin-top: 7px; }\n.facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 9px; border-top: 1px solid var(--line); padding: 8px 0; font-size: 12px; }\n.facts dt { color: var(--muted); flex: 0 1 auto; }\n.facts dd { font-weight: 600; text-align: end; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; min-width: 0; }\n.tag { display: inline-flex; border-radius: 5px; padding: 2px 6px; font-size: 11px; background: var(--soft); color: var(--muted); white-space: nowrap; }\n.tag.good { background: var(--accent-bg); color: var(--accent); }\n.tag.warn { background: var(--warm-bg); color: var(--warm); }\n.overview { display: grid; gap: 9px; }\n.overview .card-title .ghost { padding: 2px 4px; min-height: 27px; }\n.run-summary {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  flex-wrap: wrap;\n  gap: 4px 11px;\n  border: 1px solid #496655;\n  border-radius: 8px;\n  background: linear-gradient(105deg,#19362b,#2c4c3d);\n  color: #f1f5e8;\n  padding: 8px 9px;\n}\n.run-label { display: flex; align-items: center; gap: 8px; }\n.run-label svg { flex: 0 0 25px; width: 25px; height: 25px; border-radius: 6px; padding: 5px; background: #3a5a49; color: #d6edc7; }\n.run-label strong { display: block; font-size: 14px; line-height: 1.25; }\n.run-label small, .run-counts { color: #d1dfd3; font-size: 11px; }\n.run-counts b { color: #f1f5e8; }\n.next-job {\n  display: grid;\n  grid-template-columns: minmax(0,1fr) auto auto;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-height: 33px;\n  border: 0;\n  background: transparent;\n  border-radius: 0;\n  padding: 5px 3px;\n  color: var(--fg);\n}\n.next-job + .next-job { border-top: 1px solid var(--line); }\n.next-job :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.next-job .eta { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }\n.next-job svg { color: var(--accent); }\n.guard-summary {\n  width: 100%;\n  display: grid;\n  grid-template-columns: auto minmax(0,1fr) auto;\n  align-items: center;\n  gap: 7px;\n  background: var(--warm-bg);\n  color: var(--warm);\n  border-color: transparent;\n}\n.guard-summary:hover:not(:disabled) { background: var(--warm-bg); filter: brightness(.94); }\n.guard-summary small { color: inherit; white-space: nowrap; }\n.group-shortcuts { border-top: 1px solid var(--line); padding-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; }\n.group-shortcuts button { display: flex; gap: 5px; align-items: center; min-height: 28px; padding: 4px 6px; font-size: 11px; }\n.group-shortcuts small { font-variant-numeric: tabular-nums; }\n.queue-empty { color: var(--muted); font-size: 12px; }\n.queue-empty button { margin-inline-start: 6px; }\n.queue-card + .queue-card { margin-top: 10px; }\n.queue-card h3 { margin-bottom: 5px; }\n\n.plan-layout { margin-top: 11px; }\n.lump-advice { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding-inline: 9px; }\n.lump-advice .row { border-bottom: 0; }\n.lump-advice .row > svg { color: var(--accent); }\n.lump-routes { margin-top: 8px; }\n.lump-routes button.selected { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }\n.lump-actions { margin-top: 7px; }\n.candidates { margin-top: 6px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }\n.candidate {\n  width: 100%;\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 5px;\n  border: 0;\n  border-top: 1px solid var(--line);\n  background: transparent;\n  border-radius: 0;\n}\n.candidate :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.candidate[aria-pressed=true] { background: var(--accent-bg); box-shadow: inset 2px 0 var(--accent); }\n.rule-card > .field { margin-top: 6px; }\n.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }\n.block { margin-top: 16px; }\n.block-head { margin-bottom: 7px; }\n.block-head > span { font-size: 11px; color: var(--muted); }\n.row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }\n.row > svg { width: 15px; height: 15px; color: var(--muted); flex: 0 0 15px; }\n.row-info { flex: 1 1 auto; min-width: 0; }\n.row strong { font-size: 13px; }\n.row p, .note { margin-top: 3px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.note { margin-top: 8px; }\n.summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }\n.summary .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }\n.summary label { color: var(--muted); font-size: 11px; }\n.cols, .fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }\n.fields { margin: 7px 0; }\n.field { display: grid; align-content: start; gap: 3px; min-width: 0; }\n.field > span { color: var(--muted); font-size: 11px; }\ninput[type=text], input[type=number], input[type=url], select, textarea {\n  min-width: 0;\n  width: 100%;\n  color: var(--fg);\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 6px;\n  padding: 5px 7px;\n  font-size: 12px;\n}\nselect option { background: var(--surface); color: var(--fg); }\n.check { display: flex; align-items: center; gap: 7px; min-height: 29px; font-size: 12px; cursor: pointer; }\n.check input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }\n.warning { font-size: 12px; color: var(--warm); background: var(--warm-bg); border-radius: 6px; padding: 8px; margin: 8px 0; }\n.empty { color: var(--muted); font-size: 12px; padding: 10px 0; }\n.empty svg { width: 22px; height: 22px; margin-bottom: 5px; color: var(--accent); }\n.table-wrap { overflow-x: auto; }\n.table { width: 100%; border-collapse: collapse; font-size: 12px; }\n.table th, .table td { padding: 7px 5px; border-bottom: 1px solid var(--line); vertical-align: middle; }\n.table th { color: var(--muted); font-weight: 400; text-align: start; white-space: nowrap; }\n.table td.num { text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }\n.table td small { display: block; }\n.chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0; }\n.chip { font-size: 11px; padding: 3px 6px; background: var(--soft); border-radius: 5px; }\n.garden { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 4px; max-width: 336px; margin-bottom: 7px; }\n.tile { aspect-ratio: 1; min-width: 0; min-height: 29px; padding: 0; position: relative; display: grid; place-content: center; justify-items: center; }\n.tile .symbol { font-size: 17px; line-height: 1.15; color: var(--accent); }\n.tile .plant-label { font-size: 9px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }\n.tile.mature { background: var(--accent-bg); }\n.tile.selected { border-color: var(--accent); }\n.tile.protected::after { content: \"·\"; position: absolute; color: var(--warm); font-size: 22px; line-height: 1; top: 0; right: 3px; }\n.tile-info { min-height: 38px; margin-bottom: 5px; }\n.log { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }\n.log time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }\n.advanced { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 7px; }\n.advanced summary { cursor: pointer; font-size: 13px; font-weight: 600; }\n.forecast, .collection { display: flex; gap: 5px; flex-wrap: wrap; margin: 7px 0; }\n.forecast > div, .collection span { padding: 4px 6px; border-radius: 5px; background: var(--soft); font-size: 11px; }\n.forecast span, .forecast small { display: block; }\n.forecast .good, .collection .owned { color: var(--accent); }\n.forecast .bad { color: var(--bad); }\n.numeric-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px 7px; }\n.toast {\n  position: fixed;\n  bottom: 18px;\n  left: 50%;\n  transform: translateX(-50%);\n  max-width: min(580px,calc(100vw - 22px));\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  box-shadow: 0 8px 24px #0005;\n  padding: 8px 12px;\n  pointer-events: auto;\n}\n.confirm {\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  max-width: min(430px,calc(100vw - 24px));\n  padding: 16px;\n  pointer-events: auto;\n}\n.confirm::backdrop { background: #0b1712ac; }\n.confirm p { margin: 9px 0 13px; white-space: pre-line; color: var(--muted); }\n.confirm .actions { justify-content: flex-end; }\n.entry {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n  min-height: 25px;\n  color: var(--accent);\n  background: var(--surface);\n  border-color: var(--line);\n  padding: 3px 7px;\n  font-size: 12px;\n  font-weight: 650;\n}\n.entry svg { width: 13px; height: 13px; flex-basis: 13px; }\n:host([data-density=compact]) .row { padding-block: 5px; }\n:host([data-density=compact]) .main { padding-block: 10px; }\n@media (max-width: 560px) {\n  .cols { grid-template-columns: minmax(0,1fr); }\n  .category-tabs button { padding-inline: 4px; }\n}\n@media (max-width: 500px) {\n  :host { --pad: 10px; }\n  .rule-layout { grid-template-columns: minmax(0,1fr); }\n  .backdrop { padding: 7px; }\n  .window { max-height: calc(100dvh - 14px); }\n  .head small { display: none; }\n  .workbench-nav { gap: 0 2px; }\n  .nav { padding-inline: 4px; }\n  .field :is(input,select) { font-size: 16px; }\n  .run-counts { margin-inline-start: 33px; }\n}\n@media (max-width: 360px) {\n  .fields { grid-template-columns: minmax(0,1fr); }\n  .head { gap: 4px; }\n}\n@media (pointer: coarse) {\n  :is(.head-action,.nav,.category-tabs button,.rule-tabs button,.check,.next-job,.group-shortcuts button,.guard-summary) {\n    min-height: 44px;\n  }\n}\n";
 (() => {
 'use strict';
 const C=window.CookiePilotCore2,E=window.CookiePilotEngine2;if(!C||!E||window.top!==window)return;
@@ -783,7 +843,7 @@ const layouts=[['rows','亲本行'],['checker','交错排列'],['fill','填满�
 const challengeModes=[['none','不启用'],['noClick','无点击'],['noUpgrade','无升级'],['both','无点击与无升级']];
 const slots=['钻石槽','红宝石槽','翡翠槽'];
 const selectedRules=new Map();
-const lumpUnlocks=[['Farm','花园'],['Wizard tower','魔法书'],['Temple','万神殿'],['Bank','股市']];
+const lumpReserveModes=[['adaptive','按存档推荐'],['custom','自定保留量']];
 let groupId='garden',planTab='purchase',shownView='',inspectedPurchase='',lumpDraft=null;
 
 function activePage(){
@@ -1042,7 +1102,7 @@ function contextRows(g,c,group,key){
  const lump=C.lumpWindow(g),balance=C.lumpBalance(g);
  if(key==='lumpLevel'){
   const target=C.lumpPlan(g,c);
-  return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],['最低保留',lumpCount(c.lumpReserve)],
+  return [['糖块库存',balance===null?'尚未解锁':lumpCount(balance)],['最低保留',lumpCount(target.reserve??C.lumpBudget(g,c).reserve)],
    ...(target.object?[['等级目标',target.name+' '+target.current+' → '+target.target+' 级'],
     ['还需花费',lumpCount(target.totalCost)],...(target.shortfall?[['预算缺口',lumpCount(target.shortfall)]]:[])]:[])];
  }
@@ -1227,12 +1287,28 @@ function purchasePlanning(g,c){
  <details class="advanced"><summary>采购设置</summary>${check('purchase','启用自动采购')}${purchaseControls(c)}</details>`;
 }
 const lumpCount=value=>F(value,0)+' 颗';
-function lumpSelection(g,c){
+function lumpSelection(g,c,advice=C.lumpAdvice(g,c)){
+ if(lumpDraft)return lumpDraft;
+ const plan=C.lumpPlan(g,c);
+ if(plan.object&&plan.status!=='done')return c.lumpGoal;
+ if(advice)return advice;
  const object=g.Objects?.Farm||g.ObjectsById[0];
- return lumpDraft||c.lumpGoal||{buildingId:object.id,level:object.level+1};
+ return{buildingId:object.id,level:object.level+1};
 }
-function lumpRoutes(g,c,draft){
- const routes=lumpUnlocks.map(([building,label])=>[g.Objects?.[building],1,'解锁'+label]);
+function lumpAdviceRow(g,c,draft,advice){
+ if(!advice)return'';
+ const plan=C.lumpPlan(g,c,advice);
+ if(!plan.object)return'';
+ const saving=c.lumpReserveMode==='adaptive'&&plan.balance!==null&&plan.balance<plan.reserve;
+ const picked=draft.buildingId===advice.buildingId&&draft.level===advice.level;
+ const headline=saving?'先把库存攒到 '+lumpCount(plan.reserve):'建议下一步 · '+advice.label;
+ const detail=saving?'还差 '+lumpCount(Math.ceil(plan.reserve-plan.balance))+'，存满后可为「'+advice.label+'」继续积攒预算。':
+  '花费 '+lumpCount(plan.totalCost)+' · '+advice.reason;
+ return `<section class="lump-advice" aria-label="糖块分配建议">${row('growth',esc(headline),esc(detail),
+  picked?'':btn('查看建议','lump-route',advice.buildingId+':'+advice.level,'ghost'))}</section>`;
+}
+function lumpRoutes(g,c,draft,openings){
+ const routes=openings.map(({buildingId,level,label})=>[g.ObjectsById[buildingId],level,label]);
  routes.push([g.Objects?.Farm,9,'花园 6×6']);
  const market=C.mini(g,'Bank'),office=market?.offices?.[market.officeLevel];
  if(office?.cost)routes.push([g.Objects?.Cursor,office.cost[1],'股市办公室门槛']);
@@ -1241,7 +1317,8 @@ function lumpRoutes(g,c,draft){
   return btn(label+' · '+lumpCount(plan.totalCost),'lump-route',object.id+':'+level,
    draft.buildingId===object.id&&draft.level===level?'selected':'',!plan.object);
  });
- return buttons.length?`<div class="actions lump-routes" aria-label="常用糖块路线">${buttons.join('')}</div>`:'';
+ return buttons.length?`<details class="advanced"><summary>其他糖块路线</summary>
+  <div class="actions lump-routes" aria-label="常用糖块路线">${buttons.join('')}</div></details>`:'';
 }
 function lumpEstimate(g,c,draft){
  const plan=C.lumpPlan(g,c,{buildingId:draft.buildingId,level:draft.level});
@@ -1250,10 +1327,10 @@ function lumpEstimate(g,c,draft){
  const manual=C.lumpPlan(g,c,{buildingId:object.id,level:current+1});
  const goal=c.lumpGoal;
  const assigned=c.lumpLevel&&goal?.saveId===g.fullDate&&current>=goal.fromLevel&&goal.buildingId===object.id&&goal.level===target;
- const unlock=lumpUnlocks.find(([name])=>name===object.name);
+ const unlock=C.LUMP_UNLOCKS.find(item=>item.building===object.name);
  const effects=[];
- if(unlock&&current===0&&target>=1)effects.push('解锁'+unlock[1]);
- if(object.name==='Farm'&&current<9&&target>current)effects.push('花园扩至 '+[4,6,9,12,16,20,25,30,36][Math.min(target,9)-1]+' 格');
+ if(unlock&&current===0&&target>=1)effects.push('解锁'+unlock.feature);
+ if(object.name==='Farm'&&current<9&&target>current)effects.push('花园扩至 '+C.FARM_TILES[Math.min(target,9)-1]+' 格');
  const market=C.mini(g,'Bank'),office=market?.offices?.[market.officeLevel];
  if(object.name==='Cursor'&&office?.cost&&current<office.cost[1]&&target>=office.cost[1]){
   effects.push('达到股市办公室的等级要求，还需拥有 '+office.cost[0]+' 个光标');
@@ -1261,28 +1338,53 @@ function lumpEstimate(g,c,draft){
  if(current<10&&target>=10&&object.levelAchiev10&&!object.levelAchiev10.won){
   effects.push('解锁成就「'+(object.levelAchiev10.dname||object.levelAchiev10.name)+'」');
  }
+ let bakingChange='';
+ if(manual.status==='ready'&&C.has(g,'Sugar baking')){
+  const before=Math.min(C.LUMP_BAKING_CAP,manual.balance);
+  const after=Math.min(C.LUMP_BAKING_CAP,manual.balance-manual.nextCost);
+  if(after<before)bakingChange=note('升一级后糖块烘焙加成会从 +'+F(before)+'% 变为 +'+F(after)+'%。');
+ }
  return facts([
   ['当前等级',current+' 级'],
   ['下一级',plan.nextCost?lumpCount(plan.nextCost)+(plan.nextShortfall?' · 缺 '+lumpCount(plan.nextShortfall):''):'已达标'],
   ['到目标总花费',lumpCount(plan.totalCost)],
   ['目标预算',plan.status==='done'?'已达标':plan.balance===null?'等待糖块解锁':
    plan.shortfall?'缺 '+lumpCount(plan.shortfall)+(Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):''):'已备齐']
- ])+(effects.length?note(esc(effects.join(' · '))):'')+
+ ])+(effects.length?note(esc(effects.join(' · '))):'')+bakingChange+
   (plan.shortfall&&Number.isFinite(plan.seconds)?note('等待时间按每轮 1 颗和当前生长速度估算。'):'')+
   `<div class="actions lump-actions">
    ${btn(assigned?'已交给挂机':'交给挂机','assign-lump','','primary',assigned||plan.status==='done'||!C.compatible(g)||!g.fullDate)}
    ${btn('手动升 1 级','level',object.id,'',manual.status!=='ready'||!C.compatible(g))}
   </div>`;
 }
-function lumpPlanning(g,c){
+function lumpStatus(g,c,draft){
  const balance=C.lumpBalance(g),window=C.lumpWindow(g);
- const draft=lumpSelection(g,c),target=C.lumpPlan(g,c);
+ const {reserve,baking,unlock}=C.lumpBudget(g,c,g.ObjectsById[draft.buildingId],draft.level);
+ const cap=C.LUMP_BAKING_CAP;
+ let explanation='';
+ if(c.lumpReserveMode==='adaptive'){
+  if(!baking)explanation='尚未购买糖块烘焙，推荐保留 0 颗。';
+  else if(unlock)explanation='可用 1 颗解锁小游戏。其他升级保留 '+lumpCount(cap)+' 以维持满额加成。';
+  else explanation='糖块烘焙每颗提供 +1% 产量，保留 '+lumpCount(cap)+' 可维持满额。';
+ }
+ return facts([
+  ['库存',balance===null?'尚未解锁':lumpCount(balance)],
+  ['当前目标保留',lumpCount(reserve)],
+  ['可分配',balance===null?'—':lumpCount(Math.max(0,balance-reserve))],
+  ...(balance!==null&&baking?[['糖块烘焙加成','+'+F(Math.min(cap,balance))+'% 产量']]:[]),
+  ['安全收取',window?window.overripe?'等待自然掉落':T(window.remaining):'等待生长'],
+  ['自然掉落',window?T(window.dropRemaining):'等待生长']
+ ])+(explanation?note(esc(explanation)):'');
+}
+function lumpPlanning(g,c){
+ const openings=C.lumpOpenings(g,c),advice=C.lumpAdvice(g,c,openings);
+ const draft=lumpSelection(g,c,advice),target=C.lumpPlan(g,c);
  const buildings=g.ObjectsById.filter(object=>object&&typeof object.levelUp==='function');
  const active=c.lumpGoal?row('growth',target.object?esc(target.name+' '+target.current+' → '+target.target+' 级'):'糖块等级目标',
   esc(lumpUpgradeReport(g,c,target).text),`<div class="actions">
    ${btn('升级规则','open-rule','lumpLevel','ghost')}${btn('取消目标','cancel-lump','','ghost')}
   </div>`):'';
- return active+lumpRoutes(g,c,draft)+`<div class="rule-layout plan-layout">
+ return lumpAdviceRow(g,c,draft,advice)+active+`<div class="rule-layout plan-layout">
   <section class="rule-card" aria-label="等级目标">
    <h3>等级目标</h3>
    <div class="fields">
@@ -1294,18 +1396,15 @@ function lumpPlanning(g,c){
   </section>
   <section class="rule-card" aria-label="糖块状态">
    <h3>糖块状态</h3>
-   ${facts([
-    ['库存',balance===null?'尚未解锁':lumpCount(balance)],
-    ['可分配',balance===null?'—':lumpCount(Math.max(0,balance-c.lumpReserve))],
-    ['安全收取',window?window.overripe?'等待自然掉落':T(window.remaining):'等待生长'],
-    ['自然掉落',window?T(window.dropRemaining):'等待生长'],
-    ...(balance!==null&&C.has(g,'Sugar baking')?[['糖块烘焙加成','+'+Math.min(100,balance)+'% 产量']]:[])
-   ])}
-   ${field('lumpReserve','糖块最低保留量','number',{min:0,step:1})}
+   <div id="lump-balances">${lumpStatus(g,c,draft)}</div>
+   <div class="fields">
+    ${select('lumpReserveMode','保留策略',lumpReserveModes)}
+    ${c.lumpReserveMode==='custom'?field('lumpReserve','最低保留量','number',{min:0,step:1}):''}
+   </div>
    ${check('lump','完全成熟后自动收取')}
-   ${balance===null?note('累计烘焙满 10 亿后开始生长。'):''}
+   ${C.lumpBalance(g)===null?note('累计烘焙满 10 亿后开始生长。'):''}
   </section>
- </div>`;
+ </div>`+lumpRoutes(g,c,draft,openings);
 }
 function prestigePlanning(g,c){
  const gained=C.prestige(g),chips=gained+C.num(g.heavenlyChips),gap=Math.max(0,c.ascendTarget-gained);
@@ -1466,6 +1565,7 @@ function assignLumpGoal(draft){
     throw Error('存档、等级或保留量已变化，请重新确认');
    }
    if(fresh.status==='done'){toast(fresh.reason);return;}
+   lumpDraft=null;
    engine.set({lumpGoal:goal,lumpLevel:true});
    engine.log('糖块挂机目标 · '+plan.name+' '+plan.target+' 级');
    void lease();
@@ -1477,6 +1577,7 @@ root.addEventListener('input',event=>{
  const g=engine.g,c=engine.c;
  lumpDraft={buildingId:lumpSelection(g,c).buildingId,level:el.valueAsNumber};
  $('lump-estimate').innerHTML=lumpEstimate(g,c,lumpDraft);
+ $('lump-balances').innerHTML=lumpStatus(g,c,lumpDraft);
 });
 root.addEventListener('change',event=>{
  const el=event.target;
@@ -1562,7 +1663,7 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
   return;
  }
  if(action==='assign-lump'){assignLumpGoal(lumpSelection(g,c));return;}
- if(action==='cancel-lump'){engine.set({lumpGoal:null,lumpLevel:false});engine.log('已取消糖块等级目标');void lease();return;}
+ if(action==='cancel-lump'){lumpDraft=null;engine.set({lumpGoal:null,lumpLevel:false});engine.log('已取消糖块等级目标');void lease();return;}
  if(action==='preset'){preset(arg);return;}
  if(action==='update'){await checkUpdate();return;}
  if(action==='inspect-purchase'){inspectedPurchase=arg;render();return;}
@@ -1647,8 +1748,8 @@ function visibility(){
 }
 function syncStorage(event){
  if(event.key===E.SETTINGS){
-  const before=[engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve];
-  if(!engine.syncLumpSettings()||JSON.stringify(before)===JSON.stringify([engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve]))return;
+  const before=[engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve,engine.c.lumpReserveMode];
+  if(!engine.syncLumpSettings()||JSON.stringify(before)===JSON.stringify([engine.c.lumpGoal,engine.c.lumpLevel,engine.c.lumpReserve,engine.c.lumpReserveMode]))return;
   void lease();
   if(engine.c.open&&!$('confirm').open)render();
   return;

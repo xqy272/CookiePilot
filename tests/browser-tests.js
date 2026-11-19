@@ -48,13 +48,41 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   click('[data-action="plan-tab"][data-arg="lumps"]');
   assert(workspace.querySelector('[aria-label="糖块状态"]'),'无法从转生切换到糖块规划');
  });
+ await test('糖块分配建议、首颗投入和动态保留量',async()=>{
+  const workspace=root().getElementById('main'),temple=g.Objects.Temple;
+  const startLevel=temple.level,startLumps=g.lumps;
+  try{
+   temple.level=0;g.lumps=1;
+   e.set({lumpReserveMode:'adaptive',lumpGoal:null,lumpLevel:false});
+   page('planning');click('[data-action="plan-tab"][data-arg="lumps"]');
+   assert(workspace.querySelector('[aria-label="糖块分配建议"]').textContent.includes('解锁万神殿'),'没有默认建议');
+   assert(/当前目标保留0 颗/.test(workspace.textContent),'初期目标仍有保留门槛');
+   click('[data-action="assign-lump"]');
+   assert(root().getElementById('confirm-text').textContent.includes('保留 0 颗'),'确认使用了错误的保留量');
+   click('#confirm-ok');await delay(1400);
+   assert(temple.level===1&&g.lumps===0&&!e.c.lumpLevel,'第一颗未执行推荐目标');
+   g.lumps=7;g.owned.add('Sugar baking');
+   click('[data-action="plan-tab"][data-arg="lumps"]');
+   assert(/先把库存攒到 100 颗/.test(workspace.textContent)&&/当前目标保留100 颗/.test(workspace.textContent),'未建议保护已获得的糖块烘焙加成');
+   const mode=workspace.querySelector('[data-key="lumpReserveMode"]');
+   mode.value='custom';mode.dispatchEvent(new Event('change',{bubbles:true}));
+   const amount=workspace.querySelector('[data-key="lumpReserve"]');
+   amount.value='3';amount.dispatchEvent(new Event('change',{bubbles:true}));
+   assert(/当前目标保留3 颗/.test(workspace.textContent),'自定数量未生效');
+  }finally{
+   temple.level=startLevel;g.lumps=startLumps;g.owned.delete('Sugar baking');
+   e.set({lumpReserveMode:'adaptive',lumpReserve:100,lumpGoal:null,lumpLevel:false});
+  }
+ });
  await test('糖块规划预览、确认、排队、收取和自动升级',async()=>{
   const workspace=root().getElementById('main'),farm=g.Objects.Farm,startLumps=g.lumps,startTime=g.lumpT;
   const initialLevel=farm.level;
   const planButton='[data-action="plan-tab"][data-arg="lumps"]';
   g.lumps=102;
   try{
+   e.set({lumpReserveMode:'custom',lumpReserve:100});
    page('planning');click(planButton);
+   click('details.advanced summary');
    click(`[data-action="lump-route"][data-arg="${farm.id}:9"]`);
    const field=root().getElementById('lump-target-level');
    assert(field.value==='9'&&workspace.textContent.includes('花园扩至 36 格'),'花园路线未更新目标');
@@ -78,7 +106,7 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    assert(workspace.textContent.includes('糖块目标达成')&&workspace.textContent.includes('安全收取 1 颗糖块'),'没有执行记录');
   }finally{
    farm.level=initialLevel;g.lumps=startLumps;g.lumpT=startTime;
-   e.set({lump:false,lumpLevel:false,lumpGoal:null});
+   e.set({lump:false,lumpLevel:false,lumpGoal:null,lumpReserveMode:'adaptive'});
   }
  });
  await test('20 次每秒连点与全局暂停',async()=>{e.set({click:true,rate:20});await delay(1300);const a=g.cookieClicks;await delay(1100);assert(g.cookieClicks-a>=15&&g.cookieClicks-a<=27,'实际频率 '+(g.cookieClicks-a));click('#pause');const b=g.cookieClicks;await delay(300);assert(g.cookieClicks===b,'暂停后仍点击');click('#pause');e.set({click:false});});
