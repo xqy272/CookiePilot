@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "2.1.2",
+  "version": "2.2.0",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "新增糖块分配建议。保留量按存档计算，支持第一颗解锁小游戏，并在获得糖块烘焙后保护产量加成。",
+  "notes": "统一工作台尺寸与导航，重做总览和设置，明确糖块升级与采购目标的执行范围。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.1.2/CookiePilot-v2.1.2.zip",
-  "sha256": "19de324a0635d322d9df7162e657ac4a956f3a5d5fc3dc11f745fd047833fa06"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.2.0/CookiePilot-v2.2.0.zip",
+  "sha256": "126403306f6b3b92891ed10268a2130ca317b06e70945b51c9666275ed07e8c0"
 }

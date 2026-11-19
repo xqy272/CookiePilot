@@ -10,35 +10,43 @@ const I=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 const host=document.createElement('div');host.id='cookie-pilot-v2';host.style.cssText='position:fixed;inset:0;z-index:1000000000;pointer-events:none;';const root=host.attachShadow({mode:'open'});(document.body||document.documentElement).append(host);
 const engine=new E.Engine(()=>window.Game,localStorage,{hidden:()=>document.hidden,change:()=>{theme();render();},log:()=>{}});
 let page='overview',search='',selectedTile='2,2',destroyed=false,timer,leaseRelease,leasePending=false,leaseEpoch=0,toastTimer,update=null,updateText='尚未检查',checking=false,lab=false,pending=null,liveAt=0,ruleAt=0,checkingAt=0;
+let leaseInOtherTab=false;
 const urls=new Set(),seen=new WeakSet();let audio=null;
 const pages=[
- ['overview','总览'],['automation','玩法规则'],['planning','规划台'],
- ['history','操作记录'],['settings','挂机设置'],['storage','存档']
+ ['overview','总览','home'],['automation','玩法规则','rules'],['planning','规划台','buy'],
+ ['history','记录','clock'],['settings','设置','settings'],['storage','存档','save']
 ];
+const planTabs=[['purchase','采购与收益'],['combo','爆发组合'],['lumps','糖块与解锁'],['prestige','转生目标']];
+const viewStates=new Map();
+let shownView='',renderedControls='';
 root.innerHTML=`<style>${window.CookiePilotStyles2||''}</style>
  <div class="backdrop" id="backdrop" hidden>
   <section class="window" role="dialog" aria-modal="true" aria-labelledby="cp-title">
    <header class="head">
-    <div class="brand-icon">${I('cookie')}</div>
-    <h1 class="wordmark" id="cp-title">Cookie Pilot</h1>
-    ${demo?'<small>模拟存档</small>':''}
+    <div class="head-brand">
+     <div class="brand-icon">${I('cookie')}</div>
+     <div><h1 class="wordmark" id="cp-title">Cookie Pilot</h1>${demo?'<small>模拟存档</small>':''}</div>
+    </div>
     <div class="grow"></div>
+    <span class="runtime" id="runtime" role="status"></span>
     <button type="button" id="pause" class="primary head-action" aria-label="暂停全部自动化">${I('pause')} 暂停</button>
-    <button type="button" id="close" class="ghost head-action" aria-label="关闭工作台">${I('close')} 收起</button>
+    <button type="button" id="close" class="ghost head-action" aria-label="收起工作台" title="收起工作台（Esc）">${I('close')}</button>
    </header>
    <nav class="workbench-nav" aria-label="工作台导航">
-    ${pages.map(([key,name])=>`<button type="button" class="nav" data-page="${key}">${name}</button>`).join('')}
+    ${pages.map(([key,name,icon])=>`<button type="button" class="nav" data-page="${key}">${I(icon)}${name}</button>`).join('')}
    </nav>
-   <main class="main" id="main"></main>
+   <div class="view-controls" id="view-controls" hidden></div>
+   <main class="main" id="main" tabindex="-1" aria-labelledby="view-title"></main>
   </section>
  </div>
  <div class="toast" id="toast" role="status" hidden></div>
  <dialog class="confirm" id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
-  <h3 id="confirm-title"></h3><p id="confirm-text"></p>
-  <div class="actions"><button id="confirm-cancel">取消</button><button id="confirm-ok" class="primary">确认操作</button></div>
+  <h3 id="confirm-title"></h3>
+  <div id="confirm-text"></div>
+  <div class="actions"><button type="button" id="confirm-cancel">取消</button><button type="button" id="confirm-ok" class="primary">确认</button></div>
  </dialog>
  <input type="file" id="settings-file" accept="application/json,.json" hidden>`;
-const $=id=>root.getElementById(id),main=$('main');
+const $=id=>root.getElementById(id),main=$('main'),viewControls=$('view-controls');
 const entryHost=document.createElement('span');entryHost.id='cookie-pilot-entry';entryHost.style.cssText='display:inline-block;vertical-align:middle;margin:3px 8px 3px 5px;position:relative;z-index:5;';const entryRoot=entryHost.attachShadow({mode:'open'});entryRoot.innerHTML=`<style>${window.CookiePilotStyles2||''}</style><button type="button" class="entry" aria-label="打开 Cookie Pilot 工作台" aria-expanded="false">${I('cookie')} Pilot</button>`;
 function mountEntry(){const top=document.getElementById('topBar');if(top&&!entryHost.isConnected)top.prepend(entryHost);else if(!top&&!entryHost.isConnected){const fallback=document.getElementById('game')||document.body;fallback.prepend(entryHost);}}
 mountEntry();const observer=new MutationObserver(()=>{if(!entryHost.isConnected)mountEntry();});observer.observe(document.body,{childList:true,subtree:true});
@@ -48,10 +56,10 @@ function theme(){const mode=engine.c.theme==='system'?(media.matches?'light':'da
 media.addEventListener('change',theme);
 const tag=(s,cls='')=>`<span class="tag ${cls}">${esc(s)}</span>`;
 const btn=(text,action,arg='',cls='',disabled=false)=>`<button type="button" class="${cls}" data-action="${action}" data-arg="${esc(arg)}"${disabled?' disabled':''}>${text}</button>`;
-const head=(title,sub,extra='')=>`<div class="heading"><div><h2>${title}</h2><p>${sub}</p></div>${extra}</div>`;
+const head=(title,sub='',extra='')=>`<div class="heading"><div><h2>${title}</h2>${sub?`<p>${sub}</p>`:''}</div>${extra}</div>`;
 const note=s=>`<p class="note">${s}</p>`;
-const block=(title,body,hint='')=>`<section class="block"><div class="block-head"><h3>${title}</h3><span>${hint}</span></div>${body}</section>`;
-const row=(icon,title,sub,tail='')=>`<div class="row">${I(icon)}<div class="row-info"><strong>${title}</strong><p>${sub}</p></div>${tail}</div>`;
+const block=(title,body,hint='')=>`<section class="block"><div class="block-head"><h3>${title}</h3>${hint?`<span>${hint}</span>`:''}</div>${body}</section>`;
+const row=(icon,title,sub,tail='')=>`<div class="row">${I(icon)}<div class="row-info"><strong>${title}</strong>${sub?`<p>${sub}</p>`:''}</div>${tail}</div>`;
 const field=(key,label,type='number',opts={})=>`<label class="field"><span>${label}</span><input data-key="${key}" aria-label="${label}" type="${type}" value="${esc(engine.c[key])}" ${opts.min!==undefined?`min="${opts.min}"`:''} ${opts.max!==undefined?`max="${opts.max}"`:''} step="${opts.step||'any'}"></label>`;
 const select=(key,label,options,value=engine.c[key])=>`<label class="field"><span>${label}</span><select data-key="${key}" aria-label="${label}">${options.map(([v,t])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(t)}</option>`).join('')}</select></label>`;
 const check=(key,label)=>`<label class="check"><input type="checkbox" data-key="${key}" aria-label="${label}" ${engine.c[key]?'checked':''}>${label}</label>`;
@@ -59,27 +67,37 @@ const empty=(title,sub)=>`<div class="empty">${I('shield')}<h3>${title}</h3><p>$
 const stats=items=>`<div class="summary">${items.map(([label,value])=>`<div><div class="value">${value}</div><label>${label}</label></div>`).join('')}</div>`;
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('toast').hidden=true;},5500);}
 function show(value=true){
+ if(!value)rememberPosition();
+ if(!value)closeConfirmation();
+ if(!value)shownView='';
  engine.c.open=value;
  engine.persist();
  $('backdrop').hidden=!value;
  entryRoot.querySelector('button').setAttribute('aria-expanded',String(value));
- if(value){render();$('close').focus();}
+ if(value){render();root.querySelector('[aria-current="page"]')?.focus({preventScroll:true});}
  else entryRoot.querySelector('button').focus();
 }
-function navigate(next){
+function navigate(next,focus){
  page=next;
- shownView='';
- search='';
- main.scrollTop=0;
  render();
- root.querySelector('[data-page="'+activePage()+'"]')?.focus({preventScroll:true});
+ const control=focus?root.querySelector(focus):null;
+ (control||main).focus({preventScroll:true});
+ if(control&&viewControls.contains(control))control.scrollIntoView({block:'nearest',inline:'nearest'});
 }
-function ask(title,text,fn){
+function ask(title,details,fn){
+ const {rows,message,button} = typeof details==='string'?{message:details}:details;
  pending=fn;
  $('confirm-title').textContent=title;
- $('confirm-text').textContent=text;
- $('confirm').showModal();
+ $('confirm-text').innerHTML=(rows?facts(rows):'')+(message?`<p>${esc(message)}</p>`:'');
+ $('confirm-ok').textContent=button||'确认';
+ if(!$('confirm').open)$('confirm').showModal();
  $('confirm-cancel').focus();
+}
+function closeConfirmation(){
+ const action=pending;
+ pending=null;
+ $('confirm').close();
+ return action;
 }
 function download(text,name,type='text/plain;charset=utf-8'){const url=URL.createObjectURL(new Blob([text],{type}));urls.add(url);const a=document.createElement('a');a.href=url;a.download=name;root.append(a);a.click();a.remove();setTimeout(()=>{URL.revokeObjectURL(url);urls.delete(url);},15000);}
 const stamp=at=>new Date(at).toISOString().replace(/[:.]/g,'-');
@@ -114,7 +132,7 @@ function growthPage(g,c){
  const wrinklers=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
  const seasons=Object.entries(g.seasons||{}).map(([key,season])=>{
   const upgrades=Object.values(g.Upgrades||{}).filter(u=>u.season===key&&u.pool!=='toggle');
-  return '<details class="advanced"><summary>'+esc(season.name)+' · '+upgrades.filter(u=>u.bought).length+' / '+upgrades.length+
+  return '<details class="advanced" data-state="season-'+esc(key)+'"><summary>'+esc(season.name)+' · '+upgrades.filter(u=>u.bought).length+' / '+upgrades.length+
    '</summary><div class="collection">'+upgrades.map(u=>'<span class="'+(u.bought?'owned':'')+'">'+
    (u.bought?'✓ ':'')+esc(u.dname||u.name)+'</span>').join('')+'</div></details>';
  });
@@ -125,8 +143,52 @@ function growthPage(g,c){
    '<div class="actions">'+btn('收取普通皱纹虫','wrinklers-manual')+btn('收取规则','open-rule','wrinkler','ghost')+'</div>')+
   block('季节收藏',btn('季节规则','open-rule','season','ghost')+seasons.join(''));
 }
-function storagePage(g,c){const saves=engine.backups();return head('存档与实验室','重要操作留下可恢复的快照；实验室每次会话单独开启。')+`<div class="actions">${btn('立即备份','backup','','primary')}${btn('导出当前存档','export')}${btn('导出助手设置','settings-export')}${btn('导入助手设置','settings-import')}</div>`+note('保留最近 10 份普通快照与最多 5 份重点快照。迁移、组合出售和实验室快照会优先保留；请下载长期存档。')+block('快照记录',saves.map(s=>row('save',esc(s.label)+(s.pin?' · 重点':''),new Date(s.at).toLocaleString('zh-CN'),`<div class="actions">${btn('下载','backup-download',s.id)}${btn('恢复','restore',s.id)}</div>`)).join('')||note('尚无快照。'))+block('轻量实验室',`<label class="check"><input type="checkbox" id="lab-toggle" ${lab?'checked':''}>仅本次会话启用资源补给</label><div class="warning">补给会改变资源、累计产量、成就和转生进度。每次先备份，备份失败则不执行。还原快照会回退之后的游戏进度。</div><div class="actions">${[1,10,60].map(n=>`<button data-action="grant" data-arg="${n}" ${lab?'':'disabled'}>+ ${n} 分钟无增益产量</button>`).join('')}<button data-action="grant-lump" ${lab?'':'disabled'}>+ 1 糖块</button><button data-action="refill-magic" ${lab?'':'disabled'}>恢复全部魔力</button></div>`)+block('本次操作记录',engine.logs.slice(0,35).map(x=>`<div class="log"><time>${new Date(x.at).toLocaleTimeString('zh-CN')}</time><span>${esc(x.text)}</span></div>`).join('')||note('等待你开始。'));}
-function settingsPage(g,c){return head('设置与更新','外观、运行保护与稳定的更新渠道。',tag('v'+C.VERSION))+`<div class="fields">${select('theme','界面主题',[['system','跟随系统'],['light','暖白'],['dark','石墨']])}${select('density','信息密度',[['comfortable','舒适'],['compact','紧凑']])}${field('backupMinutes','自动备份间隔 / 分钟','number',{min:1,max:120})}</div>`+block('运行偏好',check('background','标签页在后台时继续尝试运行')+note('浏览器可能降频、冻结或丢弃后台页面；不补发积压点击。')+check('remember','刷新后恢复已启用规则')+check('protectVeil','保护闪烁面纱，暂停点击和金饼干相关操作')+check('alerts','自然金饼干与驯鹿出现时提醒')+check('sound','事件提示音')+check('ads','隐藏游戏广告版面'))+note('扩展版的广告请求拦截在浏览器工具栏弹窗中控制。脚本版清理广告显示；网络拦截可交给已有广告拦截器。')+block('在线更新',`<div class="fields">${select('updateChannel','更新频道',[['stable','稳定版'],['beta','测试版']])}${field('releaseBase','更新发布根地址','url')}</div>${check('updateCheck','每天自动检查一次更新')}`+row('refresh',esc(updateText),update?esc(update.notes):'发布仓库：xqy272/CookiePilot',btn(checking?'检查中…':'检查更新','update'))+(update?`<div class="actions"><a href="${esc(safeLink(update.userscript))}" target="_blank" rel="noopener">打开油猴安装 / 更新页 ↗</a><a href="${esc(safeLink(update.zip))}" target="_blank" rel="noopener">下载完整版本 ↗</a></div>${note('适配游戏：'+esc(update.gameVersions.join('、'))+'。已安装的油猴脚本由管理器更新；更新后刷新游戏生效。本地扩展需替换文件并重新加载。')}`:'')+note('助手只读取版本清单，不下载执行远程代码。油猴完整脚本通过管理器更新。测试频道需要从该频道安装链接重新安装一次，随后由对应频道维护。'))+block('兼容性',row('shield','当前游戏 '+esc(g.version),C.compatible(g)?'已针对 2.058 接口适配':'未验证版本：只读信息保留，自动化停止',tag(C.compatible(g)?'已识别':'暂停',C.compatible(g)?'good':'warn'))+note('如果同时使用其他自动化 Mod，请关闭重叠操作。此助手不自动修改其他 Mod 的配置。')+`<div class="actions">${btn('关闭全部自动操作','preset','observe')}${btn('卸载本页助手','unload','','danger')}</div>`);}
+function storagePage(){
+ const saves=engine.backups();
+ const snapshots=saves.map(s=>row('save',esc(s.label)+(s.pin?' · 重点':''),new Date(s.at).toLocaleString('zh-CN'),`<div class="actions">
+  ${btn('下载','backup-download',s.id)}${btn('恢复','restore',s.id)}</div>`)).join('');
+ return head('存档')+`<div class="actions">
+  ${btn('保存快照','backup','','primary')}${btn('导出游戏存档','export')}
+ </div>`+block('本地快照',snapshots||note('尚无快照。'))+
+ `<details class="advanced" data-state="storage-lab"><summary>资源补给</summary>
+  <label class="check"><input type="checkbox" id="lab-toggle" ${lab?'checked':''}>在本次会话启用</label>
+  ${lab?`<div class="warning">补给会改变游戏进度。每次补给前会保存一份快照。</div>`:''}
+  <div class="actions">
+   ${[1,10,60].map(n=>btn('+ '+n+' 分钟基础产量','grant',n,'',!lab)).join('')}
+   ${btn('+ 1 糖块','grant-lump','','',!lab)}${btn('恢复全部魔力','refill-magic','','',!lab)}
+  </div>
+ </details>`;
+}
+function settingsPage(g){
+ const compatible=C.compatible(g);
+ const updateLinks=update?`<div class="actions update-links">
+  <a href="${esc(safeLink(update.userscript))}" target="_blank" rel="noopener">更新油猴脚本 ↗</a>
+  <a href="${esc(safeLink(update.zip))}" target="_blank" rel="noopener">下载扩展安装包 ↗</a>
+ </div>${note('油猴更新后刷新游戏。解压安装的扩展需替换文件后重新加载。')}`:'';
+ return head('设置','',tag('v'+C.VERSION))+
+  `<section class="rule-card update-card" aria-label="在线更新">
+   <div class="card-title"><h3>在线更新</h3>${btn(checking?'正在检查…':'检查更新','update','','',checking)}</div>
+   ${note(esc(updateText))}${update?note(esc(update.notes)):''}
+   ${updateLinks}
+   ${select('updateChannel','更新频道',[['stable','稳定版'],['beta','测试版']])}
+   ${check('updateCheck','每日检查更新')}
+   <details class="advanced" data-state="release-source"><summary>更新源</summary>${field('releaseBase','发布根地址','url')}</details>
+  </section>
+  <div class="rule-layout settings-layout">
+   <section class="rule-card"><h3>挂机与通知</h3>
+    ${check('remember','刷新后恢复已启用规则')}${check('background','允许后台尝试运行')}
+    ${check('protectVeil','保护闪烁面纱')}${check('alerts','提醒金饼干和驯鹿')}${check('sound','播放提醒音')}
+   </section>
+   <section class="rule-card"><h3>显示与快照</h3>
+    ${select('theme','界面主题',[['system','跟随系统'],['light','暖白'],['dark','松绿']])}
+    ${select('density','内容密度',[['comfortable','舒适'],['compact','紧凑']])}
+    ${field('backupMinutes','自动备份间隔（分钟）','number',{min:1,max:120})}${check('ads','隐藏游戏广告')}
+   </section>
+  </div>`+
+  block('配置管理',row('shield','Cookie Clicker '+esc(g.version),compatible?'':'当前游戏版本未验证，挂机已暂停',tag(compatible?'已适配':'已暂停',compatible?'good':'warn'))+
+   `<div class="actions settings-actions">${btn('导出设置','settings-export')}${btn('导入设置','settings-import')}
+    ${btn('关闭全部规则','preset','observe')}${btn('卸载本页助手','unload','','danger')}</div>`);
+}
 const groups=[
  {id:'garden',name:'花园',icon:'leaf',rules:['harvest','plant'],analysis:'garden',link:'地块与种子'},
  {id:'magic',name:'魔法与万神殿',short:'魔法与神灵',icon:'magic',rules:['cast','pantheon','godzamok'],analysis:'magic',link:'法术与组合'},
@@ -144,7 +206,7 @@ const unlocks={
  harvest:['Farm','农场'],plant:['Farm','农场'],cast:['Wizard tower','巫师塔'],pantheon:['Temple','神庙'],
  godzamok:['Temple','神庙'],trade:['Bank','银行']
 };
-const purchaseModes=[['efficient','按回本估算'],['target','持续购买指定目标'],['plan','完成一次规划目标']];
+const purchaseModes=[['efficient','按预计回本采购'],['target','持续购买同一目标'],['plan','买完目标后按回本采购']];
 const reserveModes=[['none','不保留'],['lucky','当前幸运满额'],['frenzy','狂热幸运满额'],['custom','自定义']];
 const castModes=[['mana','足够魔力时'],['full','满魔力'],['frenzy','7 倍生产增益'],['click','点击增益']];
 const gardenModes=[['seeds','只收取新种子'],['mature','收取成熟植物'],['buff','达到生产倍率再收获']];
@@ -153,7 +215,7 @@ const challengeModes=[['none','不启用'],['noClick','无点击'],['noUpgrade',
 const slots=['钻石槽','红宝石槽','翡翠槽'];
 const selectedRules=new Map();
 const lumpReserveModes=[['adaptive','按存档推荐'],['custom','自定保留量']];
-let groupId='garden',planTab='purchase',shownView='',inspectedPurchase='',lumpDraft=null;
+let groupId='garden',planTab='purchase',inspectedPurchase='',lumpDraft=null;
 
 function activePage(){
  if(page==='queue')return'overview';
@@ -162,8 +224,11 @@ function activePage(){
  return page;
 }
 function automationGate(g,c){
- if(engine.startupHold)return'刷新后等待手动恢复';
- return C.gate(g,c,engine.env());
+ if(engine.startupHold)return'刷新后等待手动继续';
+ const env=engine.env();
+ const reason=C.gate(g,c,{...env,follower:false});
+ if(reason||!env.follower)return reason;
+ return leaseInOtherTab?'另一游戏标签页正在运行':'正在取得挂机执行权';
 }
 function tabs(items,current,action,label,cls='category-tabs'){
  return `<div class="${cls}" role="group" aria-label="${label}">${items.map(([key,name])=>
@@ -339,7 +404,7 @@ const ruleConfig={
  lump(){return check('lump','完全成熟后自动收取')+btn('查看糖块规划','plan-tab','lumps','ghost');},
  lumpLevel(g,c){
   const plan=C.lumpPlan(g,c);
-  return (plan.object&&!['done','different-save'].includes(plan.status)?check('lumpLevel','让挂机执行此等级目标'):'')+
+  return (plan.object&&!['done','different-save'].includes(plan.status)?check('lumpLevel','执行此建筑的等级任务'):'')+
    btn('打开糖块规划','plan-tab','lumps','ghost');
  }
 };
@@ -362,7 +427,7 @@ const descriptions={
  wrath:'愤怒饼干可能触发负面效果。',
  purchase:'购买前核对保留线。规划目标完成一次后恢复按收益排序。',
  lump:'完全成熟后收取并开始下一轮生长。自然掉落由游戏结算。',
- lumpLevel:'每次升 1 级并核对糖块余额，达到规划等级后停止。'
+ lumpLevel:'逐级提升指定建筑，达标后结束任务。糖块收取由独立开关控制。'
 };
 
 function contextRows(g,c,group,key){
@@ -435,8 +500,6 @@ function rulesView(g,c){
  const locked=ruleLock(g,key);
  const action=group.analysis?btn(group.link,'navigate',group.analysis,'ghost'): '';
  return `<div class="rule-heading"><h2>${group.name}</h2>${action}</div>
-  ${tabs(groups.map(item=>[item.id,item.name]),group.id,'rule-group','玩法分类')}
-  ${tabs(group.rules.map(rule=>[rule,shortRules[rule]]),key,'rule-select','玩法规则','rule-tabs')}
   <div class="rule-layout">
    <section class="rule-card" aria-label="规则详情">
     <div class="card-title"><h3>${shortRules[key]}</h3>${tag(report.label,report.tone)}</div>
@@ -444,7 +507,7 @@ function rulesView(g,c){
     <p class="rule-copy">${esc(descriptions[key])}</p>
     ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):ruleConfig[key](g,c)}
    </section>
-   <section class="rule-card" aria-label="玩法状态"><h3>${group.name}状态</h3>
+   <section class="rule-card" aria-label="玩法状态"><h3>游戏状态</h3>
     ${facts(contextRows(g,c,group,key))}
    </section>
   </div>`;
@@ -506,42 +569,49 @@ function jobRows(jobs,compact){
  return jobs.map(({key,title,seconds,detail})=>
   `<button type="button" class="next-job" data-action="open-rule" data-arg="${key}">
    <span><strong>${esc(title)}</strong>${compact?'':`<small>${esc(detail)}</small>`}</span>
-   <span class="eta">${seconds>0?'约 '+T(seconds):'条件满足'}</span>${I('chevron')}
+   <span class="eta">${seconds>0?'约 '+T(seconds):'条件已满足'}</span>${I('chevron')}
   </button>`).join('');
 }
-function activity(g,c){
- const gate=automationGate(g,c),n=C.AUTO.filter(key=>c[key]).length;
- const title=engine.startupHold?'等待恢复挂机':engine.paused?'挂机已暂停':
-  gate?'挂机等待':!n?'挂机待启用':document.hidden?'正在后台尝试挂机':'正在挂机';
- const message=gate||(n?'已启用 '+n+' / '+C.AUTO.length+' 条规则':'在玩法规则中启用，或选择日常挂机');
+function runtimeState(g,c){
+ const gate=automationGate(g,c),count=C.AUTO.filter(key=>c[key]).length;
+ if(engine.paused)return{label:'已暂停',tone:'warn',message:engine.startupHold?gate:'所有挂机规则已暂停'};
+ if(gate)return{label:'等待中',tone:'warn',message:gate};
+ if(!count)return{label:'未启用',tone:'',message:'尚未启用挂机规则'};
+ return{label:document.hidden?'后台运行':'运行中',tone:'good',message:'已启用 '+count+' 条规则'};
+}
+function activity(){
  const elapsed=engine.runningMs>0?T(engine.runningMs/1000):'0秒';
- return `<section class="run-summary" aria-label="本轮挂机状态">
-  <div class="run-label">${I(gate?'shield':'spark')}<div><strong>${title}</strong><small>${esc(message)}</small></div></div>
-  <div class="run-counts">运行 <b>${elapsed}</b> · 本轮 <b>${F(engine.actions,0)} 次动作</b></div>
- </section>`;
+ return `<dl class="overview-stats" aria-label="本轮挂机统计">
+  <div><dt>挂机时长</dt><dd>${elapsed}</dd></div>
+  <div><dt>操作次数</dt><dd>${F(engine.actions,0)}</dd></div>
+  <div><dt>生效点击</dt><dd>${F(engine.clicks,0)}</dd></div>
+ </dl>`;
 }
 function compactOverview(g,c){
- const gate=automationGate(g,c);
+ const status=runtimeState(g,c);
  const jobs=nextJobs(g,c);
  const [first,...rest]=protections(g,c);
- const choose=C.AUTO.some(key=>c[key])?'':btn('配置日常挂机','preset','idle','ghost');
+ const enabled=C.AUTO.some(key=>c[key]);
  return `<div class="overview">
-  ${activity(g,c)}
-  <section aria-label="下一步执行"><div class="card-title"><h3>下一步</h3>${btn('完整队列','navigate','queue','ghost')}</div>
-   ${jobs.length?jobRows(jobs.slice(0,2),true):`<p class="queue-empty">${gate?'恢复后重新检查动作。':'等待自然事件或规则条件。'}${choose}</p>`}
+  <div class="overview-heading"><h2>挂机总览</h2>${enabled?btn('查看队列','navigate','queue','ghost'):btn('配置日常挂机','preset','idle','primary')}</div>
+  ${activity()}
+  <section class="rule-card overview-next" aria-label="下一步执行">
+   <div class="card-title"><h3>下一步</h3>${enabled?'':btn('查看队列','navigate','queue','ghost')}</div>
+   ${jobs.length?jobRows(jobs.slice(0,2),true):note(esc(status.tone==='good'?'等待自然事件或已启用规则的条件满足。':status.message+'。'))}
   </section>
   ${first?`<button type="button" class="guard-summary" data-action="open-rule" data-arg="${first.key}">
    ${I('shield')}<span><strong>${esc(first.title)}</strong> · ${esc(first.text)}</span>
    ${rest.length?`<small>另 ${rest.length} 项</small>`:I('chevron')}</button>`:''}
-  <div class="group-shortcuts" role="group" aria-label="玩法入口">${groups.map(group=>
-   btn(esc(group.short||group.name)+`<small>${group.rules.filter(key=>c[key]).length}/${group.rules.length}</small>`,'rule-group',group.id)
-  ).join('')}</div>
+  <div class="group-shortcuts" role="group" aria-label="玩法入口">${groups.map(group=>{
+   const count=group.rules.filter(key=>c[key]).length;
+   return btn(I(group.icon)+`<span>${esc(group.short||group.name)}</span><small>${count}/${group.rules.length}</small>`,'rule-group',group.id,count?'enabled':'');
+  }).join('')}</div>
  </div>`;
 }
 function queuePage(g,c){
  const jobs=nextJobs(g,c),held=protections(g,c);
  const gate=automationGate(g,c);
- return `<div class="rule-heading"><h2>完整队列</h2>${btn('回到总览','navigate','overview','ghost')}</div>
+ return `<div class="rule-heading"><h2>执行队列</h2>${btn('返回总览','navigate','overview','ghost')}</div>
   <section class="rule-card queue-card" aria-label="预计执行">
    <h3>预计执行</h3>${jobs.length?jobRows(jobs,false):note(esc(gate||'等待自然事件或规则条件。'))}
   </section>
@@ -553,7 +623,6 @@ function logsPage(){
   (engine.logs.map(entry=>`<div class="log"><time>${new Date(entry.at).toLocaleTimeString('zh-CN',{hour12:false})}</time><span>${esc(entry.text)}</span></div>`).join('')||note('尚无操作记录。'));
 }
 function planningPage(g,c){
- const tabsHtml=tabs([['purchase','采购与收益'],['combo','爆发组合'],['lumps','糖块与解锁'],['prestige','转生目标']],planTab,'plan-tab','规划类型');
  let detail;
  try{
   if(planTab==='purchase')detail=purchasePlanning(g,c);
@@ -561,7 +630,8 @@ function planningPage(g,c){
   else if(planTab==='lumps')detail=lumpPlanning(g,c);
   else detail=prestigePlanning(g,c);
  }catch(error){detail=empty('此规划暂时无法读取',esc(error.message));}
- return '<div class="rule-heading"><h2>规划台</h2></div>'+tabsHtml+detail;
+ const label=planTabs.find(([key])=>key===planTab)[1];
+ return head(label)+detail;
 }
 function purchasePlanning(g,c){
  const rows=C.purchases(g,c);
@@ -571,7 +641,7 @@ function purchasePlanning(g,c){
  const choices=filtered.map(item=>`<button type="button" class="candidate" data-action="inspect-purchase" data-arg="${esc(item.id)}"
   aria-pressed="${item.id===selected?.id}"><span><strong>${esc(item.name)}</strong>
   <small>${esc(item.kind)} · ${F(item.price)} 饼干</small></span>
-  ${item.id===plan.target?.id?tag('当前目标','good'):item.blocked?tag('已屏蔽','warn'):''}</button>`).join('');
+  ${c.purchase&&c.purchaseMode!=='efficient'&&item.id===plan.target?.id?tag('采购目标','good'):item.blocked?tag('已排除','warn'):''}</button>`).join('');
  let detail=note('没有符合搜索条件的候选。');
  if(selected){
   const target=c.purchaseMode==='plan'&&c.target===selected.id;
@@ -581,7 +651,7 @@ function purchasePlanning(g,c){
    ${facts([['数量',F(selected.qty,0)],['估算增产',F(selected.delta)+'/秒'],['预计回本',T(selected.pp)],
     ['买后预计保留',F(selected.keep)],['当前预算缺口',F(selected.shortfall)],['预计可购',selected.shortfall?T(selected.eta):'预算已足']])}
    <div class="actions">
-    ${mayPlan?target?btn('取消挂机目标','target',''):btn('交给挂机','target',selected.id,'primary'):''}
+    ${mayPlan?target?btn('移除指定目标','target',''):btn('设为采购目标','target',selected.id,'primary'):''}
     ${btn('手动购买','buy',selected.id)}
     ${btn(selected.blocked?'取消屏蔽':'加入黑名单','block',selected.id,'ghost')}
    </div>
@@ -590,10 +660,10 @@ function purchasePlanning(g,c){
  return `<div class="rule-layout plan-layout">
   <section class="rule-card" aria-label="建筑与升级"><h3>建筑与升级</h3>
    <label class="field"><span>筛选候选</span><input id="purchase-search" aria-label="筛选候选" type="text" value="${esc(search)}"></label>
-   <div class="candidates">${choices||note('没有候选。')}</div></section>
+   <div class="candidates" data-scroll="purchase-list">${choices||note('没有候选。')}</div></section>
   <section class="rule-card" aria-label="采购目标详情">${detail}</section>
  </div>
- <details class="advanced"><summary>采购设置</summary>${check('purchase','启用自动采购')}${purchaseControls(c)}</details>`;
+ <details class="advanced" data-state="purchase-settings"><summary>采购设置</summary>${check('purchase','启用自动采购')}${purchaseControls(c)}</details>`;
 }
 const lumpCount=value=>F(value,0)+' 颗';
 function lumpSelection(g,c,advice=C.lumpAdvice(g,c)){
@@ -614,7 +684,7 @@ function lumpAdviceRow(g,c,draft,advice){
  const detail=saving?'还差 '+lumpCount(Math.ceil(plan.reserve-plan.balance))+'，存满后可为「'+advice.label+'」继续积攒预算。':
   '花费 '+lumpCount(plan.totalCost)+' · '+advice.reason;
  return `<section class="lump-advice" aria-label="糖块分配建议">${row('growth',esc(headline),esc(detail),
-  picked?'':btn('查看建议','lump-route',advice.buildingId+':'+advice.level,'ghost'))}</section>`;
+  picked?'':btn('选用建议','lump-route',advice.buildingId+':'+advice.level,'ghost'))}</section>`;
 }
 function lumpRoutes(g,c,draft,openings){
  const routes=openings.map(({buildingId,level,label})=>[g.ObjectsById[buildingId],level,label]);
@@ -626,7 +696,7 @@ function lumpRoutes(g,c,draft,openings){
   return btn(label+' · '+lumpCount(plan.totalCost),'lump-route',object.id+':'+level,
    draft.buildingId===object.id&&draft.level===level?'selected':'',!plan.object);
  });
- return buttons.length?`<details class="advanced"><summary>其他糖块路线</summary>
+ return buttons.length?`<details class="advanced" data-state="lump-routes"><summary>其他糖块路线</summary>
   <div class="actions lump-routes" aria-label="常用糖块路线">${buttons.join('')}</div></details>`:'';
 }
 function lumpEstimate(g,c,draft){
@@ -653,18 +723,18 @@ function lumpEstimate(g,c,draft){
   const after=Math.min(C.LUMP_BAKING_CAP,manual.balance-manual.nextCost);
   if(after<before)bakingChange=note('升一级后糖块烘焙加成会从 +'+F(before)+'% 变为 +'+F(after)+'%。');
  }
- return facts([
-  ['当前等级',current+' 级'],
-  ['下一级',plan.nextCost?lumpCount(plan.nextCost)+(plan.nextShortfall?' · 缺 '+lumpCount(plan.nextShortfall):''):'已达标'],
-  ['到目标总花费',lumpCount(plan.totalCost)],
-  ['目标预算',plan.status==='done'?'已达标':plan.balance===null?'等待糖块解锁':
-   plan.shortfall?'缺 '+lumpCount(plan.shortfall)+(Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):''):'已备齐']
- ])+(effects.length?note(esc(effects.join(' · '))):'')+bakingChange+
-  (plan.shortfall&&Number.isFinite(plan.seconds)?note('等待时间按每轮 1 颗和当前生长速度估算。'):'')+
-  `<div class="actions lump-actions">
-   ${btn(assigned?'已交给挂机':'交给挂机','assign-lump','','primary',assigned||plan.status==='done'||!C.compatible(g)||!g.fullDate)}
-   ${btn('手动升 1 级','level',object.id,'',manual.status!=='ready'||!C.compatible(g))}
-  </div>`;
+ const available=plan.status==='done'?'已达标':plan.balance===null?'等待糖块解锁':plan.status==='protected'?plan.reason:
+  plan.shortfall?'还差 '+lumpCount(plan.shortfall):'预算已足';
+ return `<p class="target-cost"><strong>${current} → ${target} 级</strong><span>${esc(lumpCount(plan.totalCost)+' · '+available)}</span></p>
+  <div class="actions lump-actions">
+   ${btn(assigned?'已安排此升级':'安排此建筑升级','assign-lump','','primary',assigned||plan.status==='done'||!C.compatible(g)||!g.fullDate)}
+   ${btn('立即升 1 级','level',object.id,'',manual.status!=='ready'||!C.compatible(g))}
+  </div>${bakingChange}${effects.length?note(esc(effects.join(' · '))):''}
+  <details class="advanced" data-state="lump-budget"><summary>预算明细</summary>${facts([
+   ['升至下一级',plan.nextCost?lumpCount(plan.nextCost)+(plan.nextShortfall?' · 缺 '+lumpCount(plan.nextShortfall):''):'已达标'],
+   ['到目标总花费',lumpCount(plan.totalCost)],
+   ...(plan.shortfall?[['预计等到预算充足',T(plan.seconds)]]:[])
+  ])}${plan.shortfall&&Number.isFinite(plan.seconds)?note('按每轮 1 颗和当前生长速度估算。'):''}</details>`;
 }
 function lumpStatus(g,c,draft){
  const balance=C.lumpBalance(g),window=C.lumpWindow(g);
@@ -689,9 +759,9 @@ function lumpPlanning(g,c){
  const openings=C.lumpOpenings(g,c),advice=C.lumpAdvice(g,c,openings);
  const draft=lumpSelection(g,c,advice),target=C.lumpPlan(g,c);
  const buildings=g.ObjectsById.filter(object=>object&&typeof object.levelUp==='function');
- const active=c.lumpGoal?row('growth',target.object?esc(target.name+' '+target.current+' → '+target.target+' 级'):'糖块等级目标',
+ const active=c.lumpGoal?row('growth',target.object?esc('升级任务 · '+target.name+' '+target.current+' → '+target.target+' 级'):'糖块升级任务',
   esc(lumpUpgradeReport(g,c,target).text),`<div class="actions">
-   ${btn('升级规则','open-rule','lumpLevel','ghost')}${btn('取消目标','cancel-lump','','ghost')}
+   ${btn('升级规则','open-rule','lumpLevel','ghost')}${btn('取消任务','cancel-lump','','ghost')}
   </div>`):'';
  return lumpAdviceRow(g,c,draft,advice)+active+`<div class="rule-layout plan-layout">
   <section class="rule-card" aria-label="等级目标">
@@ -740,51 +810,94 @@ function comboPlanning(g,c){
 
 const renderers={overview:compactOverview,queue:queuePage,planning:planningPage,history:logsPage,
  automation:rulesView,garden:gardenPage,magic:magicPage,market:marketPage,growth:growthPage,storage:storagePage,settings:settingsPage};
+function actionSelector(action,arg){
+ return '[data-action="'+CSS.escape(action)+'"][data-arg="'+CSS.escape(arg||'')+'"]';
+}
 function focusSelector(element){
  if(!element||!main.contains(element))return'';
  if(element.id)return '#'+CSS.escape(element.id);
  for(const name of ['key','protect','market','godz']){
   if(element.dataset[name]!==undefined)return '[data-'+name+'="'+CSS.escape(element.dataset[name])+'"]';
  }
- if(element.dataset.action)return '[data-action="'+CSS.escape(element.dataset.action)+'"][data-arg="'+CSS.escape(element.dataset.arg||'')+'"]';
+ if(element.dataset.action)return actionSelector(element.dataset.action,element.dataset.arg);
+ const key=element.closest('details[data-state]')?.dataset.state;
+ if(key&&element.tagName==='SUMMARY')return 'details[data-state="'+CSS.escape(key)+'"] > summary';
  return'';
+}
+function rememberPosition(){
+ if(!shownView||!engine.c.open)return;
+ const expanded=Array.from(main.querySelectorAll('details[open][data-state]'),node=>node.dataset.state);
+ const scrollers=Object.fromEntries(Array.from(main.querySelectorAll('[data-scroll]'),node=>[node.dataset.scroll,[node.scrollTop,node.scrollLeft]]));
+ viewStates.set(shownView,{top:main.scrollTop,expanded,scrollers});
+}
+function renderControls(){
+ let html='';
+ if(page==='planning')html=tabs(planTabs,planTab,'plan-tab','规划类型');
+ if(page==='automation'){
+  const group=groups.find(item=>item.id===groupId);
+  const rule=selectedRules.get(groupId)||group.rules[0];
+  html=tabs(groups.map(({id,name,short})=>[id,short||name]),groupId,'rule-group','玩法分类')+
+       tabs(group.rules.map(key=>[key,shortRules[key]]),rule,'rule-select','具体规则','rule-tabs');
+ }
+ if(html!==renderedControls){
+  viewControls.innerHTML=html;
+  viewControls.hidden=!html;
+  renderedControls=html;
+ }
 }
 function render(){
  if(destroyed)return;
- const view=page==='automation'?page+groupId+selectedRules.get(groupId):page==='planning'?page+planTab:page;
+ rememberPosition();
+ const view=page==='automation'?[page,groupId,selectedRules.get(groupId)||groups.find(g=>g.id===groupId).rules[0]].join('/'):
+  page==='planning'?[page,planTab].join('/'):page;
  const sameView=shownView===view;
- const top=sameView?main.scrollTop:0;
- const opened=sameView?[...main.querySelectorAll('details')].map(item=>item.open):[];
  const focus=sameView?focusSelector(root.activeElement):'';
+ const position=viewStates.get(view);
+ const previous=focus?main.querySelector(focus):null;
+ const selection=previous&&Number.isInteger(previous.selectionStart)?[previous.selectionStart,previous.selectionEnd,previous.selectionDirection]:null;
  const active=activePage();
  for(const nav of root.querySelectorAll('[data-page]')){
   if(nav.dataset.page===active)nav.setAttribute('aria-current','page');
   else nav.removeAttribute('aria-current');
  }
+ renderControls();
  try{
   main.innerHTML=C.ready(engine.g)?renderers[page](engine.g,engine.c):head('正在连接游戏','等待 Cookie Clicker 加载完成。');
  }catch(err){main.innerHTML=empty('此模块暂时无法读取',esc(err.message));}
+ const title=main.querySelector('h2,h3');
+ if(title)title.id='view-title';
  shownView=view;
- [...main.querySelectorAll('details')].forEach((item,index)=>{item.open=!!opened[index];});
- main.scrollTop=top;
- if(focus)main.querySelector(focus)?.focus({preventScroll:true});
+ if(engine.c.open){
+  for(const detail of main.querySelectorAll('details[data-state]'))detail.open=!!position?.expanded.includes(detail.dataset.state);
+  for(const node of main.querySelectorAll('[data-scroll]')){
+   const offsets=position?.scrollers[node.dataset.scroll];
+   if(offsets)[node.scrollTop,node.scrollLeft]=offsets;
+  }
+  main.scrollTop=position?.top||0;
+  if(focus){
+   const next=main.querySelector(focus);
+   (next&&!next.disabled?next:main).focus({preventScroll:true});
+   if(selection&&next?.setSelectionRange)next.setSelectionRange(...selection);
+  }
+ }
  live();
 }
 function live(){
  const button=$('pause');
- const label=engine.paused?'恢复全部自动化':'暂停全部自动化';
+ const label=engine.paused?'继续全部挂机规则':'暂停全部挂机规则';
  if(button.getAttribute('aria-label')!==label){
   button.innerHTML=I(engine.paused?'play':'pause')+(engine.paused?' 继续':' 暂停');
   button.setAttribute('aria-label',label);
  }
- for(const node of root.querySelectorAll('[data-rule-status]')){
-  const key=node.dataset.ruleStatus;
-  node.textContent=engine.c[key]?engine.states[key]||'等待检查':'已关闭';
- }
+ const node=$('runtime'),status=runtimeState(engine.g,engine.c);
+ if(node.textContent!==status.label)node.textContent=status.label;
+ node.dataset.tone=status.tone;
+ node.title=status.message;
 }
 function releaseLease(){
  leaseEpoch++;
  leaseRelease?.();
+ leaseInOtherTab=false;
  engine.locked=false;
  engine.lastPulse=0;
 }
@@ -802,7 +915,9 @@ async function lease(){
  const epoch=leaseEpoch;
  try{
   await navigator.locks.request('cookie-pilot:automation:v1',{ifAvailable:true},async lock=>{
-   if(!lock||epoch!==leaseEpoch||!wantsLease())return;
+   if(epoch!==leaseEpoch||!wantsLease())return;
+   leaseInOtherTab=!lock;
+   if(!lock)return;
    engine.locked=true;
    await new Promise(resolve=>{leaseRelease=resolve;});
    engine.locked=false;
@@ -842,9 +957,12 @@ function preset(name){
  const [label,value]=options[name];
  const on=C.AUTO.filter(key=>value[key]&&!engine.c[key]).map(key=>shortRules[key]);
  const disabled=C.AUTO.filter(key=>engine.c[key]&&!value[key]).map(key=>shortRules[key]);
- ask('应用'+label,'将启用：'+(on.join('、')||'无')+'\n将关闭：'+(disabled.join('、')||'无')+
-  (value.purchase?'\n库存保留：'+reserveModes.find(([key])=>key===engine.c.reserveMode)[1]:'')+
-  (engine.paused?'\n当前的暂停状态会保留。':''),()=>{
+ ask('应用'+label,{
+  rows:[['开启规则',on.join('、')||'无'],['关闭规则',disabled.join('、')||'无'],
+   ...(value.purchase?[['饼干保留',reserveModes.find(([key])=>key===engine.c.reserveMode)[1]]]:[])],
+  message:engine.paused?'当前已暂停，点击「继续」后执行。':'',
+  button:'应用方案'
+ },()=>{
    engine.set({...off,...value});
    void lease();
    toast('已应用'+label);
@@ -865,9 +983,18 @@ function assignLumpGoal(draft){
  }
  if(!plan.object||plan.status==='done'){toast(plan.reason);return;}
  goal.fromLevel=plan.current;
- ask('交给挂机 · '+plan.name+' '+plan.target+' 级',
-  '从 '+plan.current+' 级升至 '+plan.target+' 级，共需 '+lumpCount(plan.totalCost)+'，每次升级后至少保留 '+lumpCount(plan.reserve)+'。\n'+
-  '此目标只需确认一次。Pilot 会逐级执行，达到目标时结束。',()=>{
+ const existing=engine.c.lumpGoal;
+ const replacing=engine.c.lumpLevel&&(existing?.buildingId!==goal.buildingId||existing?.level!==goal.level);
+ const shortfall=plan.status==='locked'?'等待糖块解锁':plan.shortfall?'总预算还差 '+lumpCount(plan.shortfall):'总预算已足';
+ const progress=plan.status==='ready'?'下一轮检查预计花费 '+lumpCount(plan.nextCost)+'，升至 '+(plan.current+1)+' 级。':
+  plan.status==='protected'?'等待当前挑战轮回结束。':plan.status==='waiting'?plan.reason+'。':'';
+ ask('安排 '+plan.name+'升至 '+plan.target+' 级',{
+  rows:[['执行范围','仅 '+plan.name+' · '+plan.current+' → '+plan.target+' 级'],
+   ['预计总花费',lumpCount(plan.totalCost)],['每次升级后保留',lumpCount(plan.reserve)],['当前预算',shortfall],
+   ['完成后','此升级任务结束']],
+  message:[replacing?'会替换当前的建筑升级任务。':'',engine.paused?'点击「继续」后检查预算。':progress].filter(Boolean).join('\n'),
+  button:'安排升级'
+ },()=>{
    engine.syncLumpSettings();
    const fresh=C.lumpPlan(engine.g,engine.c,goal);
    if(!C.compatible(engine.g)||!fresh.object||fresh.status==='different-save'||fresh.reserve!==plan.reserve||fresh.totalCost>plan.totalCost){
@@ -885,7 +1012,10 @@ root.addEventListener('input',event=>{
  if(el.id!=='lump-target-level')return;
  const g=engine.g,c=engine.c;
  lumpDraft={buildingId:lumpSelection(g,c).buildingId,level:el.valueAsNumber};
- $('lump-estimate').innerHTML=lumpEstimate(g,c,lumpDraft);
+ const details=$('lump-estimate');
+ const expanded=details.querySelector('details')?.open;
+ details.innerHTML=lumpEstimate(g,c,lumpDraft);
+ if(expanded&&details.querySelector('details'))details.querySelector('details').open=true;
  $('lump-balances').innerHTML=lumpStatus(g,c,lumpDraft);
 });
 root.addEventListener('change',event=>{
@@ -935,13 +1065,25 @@ root.addEventListener('change',event=>{
 });
 root.addEventListener('pointerdown',()=>{if(engine.c.sound){try{audio??=new AudioContext();if(audio.state==='suspended')void audio.resume();}catch{}}});
 entryRoot.querySelector('button').addEventListener('click',()=>show(!engine.c.open));
-root.addEventListener('click',async event=>{const b=event.target.closest('button');if(!b)return;if(b.dataset.page){navigate(b.dataset.page);return;}if(b.id==='close'){show(false);return;}if(b.id==='pause'){togglePause();return;}if(b.id==='confirm-cancel'){pending=null;$('confirm').close();return;}if(b.id==='confirm-ok'){const action=pending;pending=null;$('confirm').close();try{await action?.();render();}catch(e){toast('未执行：'+e.message);engine.log('未执行：'+e.message);}return;}
+root.addEventListener('click',async event=>{
+ const b=event.target.closest('button');
+ if(!b)return;
+ if(b.dataset.page){navigate(b.dataset.page,'[data-page="'+b.dataset.page+'"]');return;}
+ if(b.id==='close'){show(false);return;}
+ if(b.id==='pause'){togglePause();return;}
+ if(b.id==='confirm-cancel'){closeConfirmation();return;}
+ if(b.id==='confirm-ok'){
+  const action=closeConfirmation();
+  try{await action?.();render();}
+  catch(e){toast('未执行：'+e.message);engine.log('未执行：'+e.message);}
+  return;
+ }
  const action=b.dataset.action,arg=b.dataset.arg,g=engine.g,c=engine.c;
  try{
  if(action==='navigate'){navigate(arg);return;}
  if(action==='rule-group'){
-  groupId=arg;navigate('automation');
-  main.querySelector('[data-action="rule-group"][data-arg="'+CSS.escape(arg)+'"]')?.focus({preventScroll:true});
+  groupId=arg;
+  navigate('automation',actionSelector('rule-group',arg));
   return;
  }
  if(action==='rule-select'||action==='open-rule'){
@@ -950,14 +1092,12 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
   groupId=group.id;
   selectedRules.set(groupId,arg);
   if(action==='open-rule'&&arg==='harvest')selectedTile=C.harvestTargets(g,c)[0]?.key||selectedTile;
-  if(page==='automation'){shownView='';render();}
-  else navigate('automation');
-  main.querySelector('[data-action="rule-select"][data-arg="'+CSS.escape(arg)+'"]')?.focus({preventScroll:true});
+  navigate('automation',actionSelector('rule-select',arg));
   return;
  }
  if(action==='plan-tab'){
-  planTab=arg;navigate('planning');
-  main.querySelector('[data-action="plan-tab"][data-arg="'+CSS.escape(arg)+'"]')?.focus({preventScroll:true});
+  planTab=arg;
+  navigate('planning',actionSelector('plan-tab',arg));
   return;
  }
  if(action==='plan-unlock'||action==='lump-route'){
@@ -966,9 +1106,8 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
   if(!object)return;
   lumpDraft={buildingId:object.id,level:action==='plan-unlock'?Math.max(1,object.level+1):level};
   planTab='lumps';
-  if(page==='planning')render();
-  else navigate('planning');
-  $('lump-target-level')?.focus({preventScroll:true});
+  navigate('planning','#lump-target-level');
+  $('lump-target-level')?.scrollIntoView({block:'nearest'});
   return;
  }
  if(action==='assign-lump'){assignLumpGoal(lumpSelection(g,c));return;}
@@ -980,13 +1119,23 @@ root.addEventListener('click',async event=>{const b=event.target.closest('button
   const item=C.purchases(g,c).find(row=>row.id===arg);
   if(!arg){engine.set({purchaseMode:'efficient',target:''});return;}
   if(!item||!item.auto||item.blocked)throw Error('该候选暂不可自动购买');
-  const apply=()=>{
+  const expected=engine.g.fullDate;
+  ask('设为采购目标',{
+   rows:[['采购目标',item.name+' ×'+item.qty],['当前价格',F(item.price)+' 饼干'],
+    ['买完预计保留',F(item.keep)+' 饼干'],['完成后','按预计回本继续采购']],
+   message:[c.purchase?'':'确认后开启自动采购。',c.bridgePurchase?'等待期间可能先买一笔能缩短等待的建筑。':'',
+    engine.paused?'点击「继续」后检查预算。':''].filter(Boolean).join('\n'),
+   button:'设定目标'
+  },()=>{
+   const liveGame=engine.g;
+   if(liveGame.fullDate!==expected)throw Error('当前存档已变化，请重新选择');
+   const fresh=C.purchases(liveGame,engine.c).find(row=>row.id===arg);
+   if(!fresh||!fresh.auto||fresh.blocked||fresh.qty!==item.qty||
+      ['noUpgrade','both'].includes(engine.c.challenge)&&arg.startsWith('u:'))throw Error('候选或执行条件已变，请重新选择');
    engine.set({purchase:true,target:arg,purchaseMode:'plan'});
    engine.log('规划采购目标：'+item.name);
    void lease();
-  };
-  if(!c.purchase)ask('启用自动采购','目标：'+item.name+'\n买后预计保留 '+F(item.keep)+' 饼干。',apply);
-  else apply();
+  });
   return;
  }
  if(action==='block'){engine.set({blocked:c.blocked.includes(arg)?c.blocked.filter(x=>x!==arg):[...c.blocked,arg]});return;}

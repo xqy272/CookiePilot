@@ -28,17 +28,40 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   click('[data-action="rule-select"][data-arg="plant"]');
   assert(workspace.querySelector('[data-key="gardenSpend"]'),'补种规则不可修改');
   page('overview');page('automation');
-  assert(workspace.querySelector('[data-action="rule-select"][data-arg="plant"][aria-pressed="true"]'),'规则选择未保留');
+  assert(root().querySelector('[data-action="rule-select"][data-arg="plant"][aria-pressed="true"]'),'规则选择未保留');
  });
- await test('紧凑总览、规划和玩法详情均可打开',()=>{
+ await test('工作台切换页面时保持同一尺寸与位置',()=>{
+  const panel=root().querySelector('.window'),bounds=JSON.stringify(panel.getBoundingClientRect());
   for(const key of ['overview','purchase','automation','garden','magic','market','growth','storage','settings','history']){
    page(key);assert(!root().getElementById('main').textContent.includes('此模块暂时无法读取'),'模块错误 '+key);
+   assert(JSON.stringify(panel.getBoundingClientRect())===bounds,'页面改变面板尺寸或位置 '+key);
   }
   page('overview');
   assert(root().querySelector('.window').getBoundingClientRect().width<=600,'总览超过预定宽度');
   assert(root().querySelectorAll('.next-job').length<=2,'首屏动作过多');
   click('[data-action="navigate"][data-arg="queue"]');
-  assert(root().getElementById('main').textContent.includes('完整队列'),'完整队列不可用');
+  assert(root().getElementById('main').textContent.includes('执行队列'),'执行队列不可用');
+ });
+ await test('返回采购时保留搜索、展开与滚动位置',async()=>{
+  page('purchase');
+  const main=root().getElementById('main');
+  const settings='details[data-state="purchase-settings"]';
+  click(settings+' summary');
+  main.scrollTop=10000;
+  const top=main.scrollTop,header=root().querySelector('.workbench-nav').getBoundingClientRect().y;
+  assert(top>0,'采购设置没有留在滚动区');
+  await delay(2300);
+  assert(root().querySelector(settings).open&&main.scrollTop===top,'自动刷新丢失页面位置');
+  assert(root().querySelector('.workbench-nav').getBoundingClientRect().y===header,'滚动移动了导航');
+  page('history');page('planning');
+  assert(root().querySelector(settings).open&&main.scrollTop===top,'返回时丢失展开状态或滚动位置');
+  const input=root().getElementById('purchase-search');
+  input.value='农场';input.dispatchEvent(new Event('change',{bubbles:true}));
+  page('history');page('planning');
+  assert(root().getElementById('purchase-search').value==='农场','返回时筛选被清空');
+  const reset=root().getElementById('purchase-search');
+  reset.value='';reset.dispatchEvent(new Event('change',{bubbles:true}));
+  click(settings+' summary');
  });
  await test('真实成就字典可以读取，规划标签仍可切换',()=>{
   page('planning');
@@ -58,7 +81,9 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    assert(workspace.querySelector('[aria-label="糖块分配建议"]').textContent.includes('解锁万神殿'),'没有默认建议');
    assert(/当前目标保留0 颗/.test(workspace.textContent),'初期目标仍有保留门槛');
    click('[data-action="assign-lump"]');
-   assert(root().getElementById('confirm-text').textContent.includes('保留 0 颗'),'确认使用了错误的保留量');
+   const confirmation=root().getElementById('confirm-text').textContent;
+   assert(/执行范围仅 神庙/.test(confirmation)&&/每次升级后保留0 颗/.test(confirmation)&&/此升级任务结束/.test(confirmation),'确认未明确范围、保留量和结束条件');
+   assert(root().getElementById('confirm-ok').textContent==='安排升级','确认按钮未说明动作');
    click('#confirm-ok');await delay(1400);
    assert(temple.level===1&&g.lumps===0&&!e.c.lumpLevel,'第一颗未执行推荐目标');
    g.lumps=7;g.owned.add('Sugar baking');
@@ -82,7 +107,7 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   try{
    e.set({lumpReserveMode:'custom',lumpReserve:100});
    page('planning');click(planButton);
-   click('details.advanced summary');
+   click('details[data-state="lump-routes"] summary');
    click(`[data-action="lump-route"][data-arg="${farm.id}:9"]`);
    const field=root().getElementById('lump-target-level');
    assert(field.value==='9'&&workspace.textContent.includes('花园扩至 36 格'),'花园路线未更新目标');
@@ -114,21 +139,40 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
  await test('金饼干与驯鹿，默认跳过愤怒饼干',async()=>{e.set({golden:true,deer:true});await delay(1300);const a=g.spawn(),b=g.spawn('golden',true),c=g.spawn('reindeer');await delay(400);assert(a.popped&&c.popped&&!b.popped,'拾取不正确');e.set({golden:false,deer:false});g.shimmers=[];});
  await test('面纱与转生守卫',async()=>{e.set({click:true,rate:20});g.owned.add('Shimmering veil [off]');await delay(1200);const a=g.cookieClicks;await delay(200);assert(g.cookieClicks===a,'面纱被点击');g.owned.delete('Shimmering veil [off]');g.OnAscend=1;await delay(200);assert(g.cookieClicks===a,'转生时点击');g.OnAscend=0;e.set({click:false});});
  await test('特殊升级不在自动采购白名单',()=>{page('purchase');const rows=CookiePilotCore2.purchases(g,e.c);assert(!rows.find(r=>r.object.name==='One mind').auto,'One mind 可自动购买');assert(root().getElementById('main').textContent.includes('巧克力蛋'),'未展示特殊升级');});
- await test('浏览候选后按需确认交给挂机',()=>{
+ await test('指定采购目标前说明执行范围和后续策略',()=>{
   page('purchase');
   const row=CookiePilotCore2.purchases(g,e.c).find(r=>r.auto&&r.id.startsWith('b:'));
   click(`[data-action="inspect-purchase"][data-arg="${row.id}"]`);
   assert(!e.c.target&&!e.c.purchase,'浏览候选改变执行策略');
   click(`[data-action="target"][data-arg="${row.id}"]`);
   assert(root().getElementById('confirm').open&&!e.c.purchase,'缺少启用确认');
+  const confirmation=root().getElementById('confirm-text').textContent;
+  assert(confirmation.includes(row.name)&&confirmation.includes('按预计回本继续采购'),'没有说明采购范围或完成后的策略');
   click('#confirm-ok');
   assert(e.c.target===row.id&&e.c.purchaseMode==='plan'&&e.c.purchase,'目标未交接');
   e.set({purchase:false,target:'',purchaseMode:'efficient'});
  });
+ await test('更新入口支持检查与查看新版',async()=>{
+  const fetchBefore=window.fetch;
+  try{
+   window.fetch=async()=>new Response(JSON.stringify({version:'9.0.0',gameVersions:['2.058'],
+    notes:'模拟发行说明',userscript:'https://example.com/cookie.user.js',zip:'https://example.com/cookie.zip'}));
+   page('settings');
+   click('[data-action="update"]');
+   await delay(200);
+   const update=root().querySelector('[aria-label="在线更新"]');
+   assert(update.textContent.includes('有新版本 9.0.0')&&update.querySelectorAll('a').length===2,'更新入口未显示可用发行包');
+  }finally{
+   window.fetch=async()=>new Response(JSON.stringify({version:CookiePilotCore2.VERSION,gameVersions:['2.058'],
+    notes:'',userscript:'https://example.com/cookie.user.js',zip:'https://example.com/cookie.zip'}));
+   click('[data-action="update"]');await delay(100);
+   window.fetch=fetchBefore;
+  }
+ });
  await test('花园格子选择与保护交互',()=>{page('garden');click('[data-action="tile"][data-arg="2,2"]');click('[data-action="protect-tile"]');assert(e.c.protectedTiles.includes('2,2'),'未保护格子');click('[data-action="protect-tile"]');assert(!e.c.protectedTiles.includes('2,2'),'未解除格子');});
  await test('独立预测不改变 Math.random',()=>{page('magic');const random=Math.random;const p=CookiePilotCore2.forecast(g,10);assert(p.length===10,'缺少预测');assert(Math.random===random,'预测污染全局 RNG');});
  await test('危险自动化需要实际确认',()=>{page('automation');click('[data-action="rule-group"][data-arg="market"]');const input=root().querySelector('[data-key="trade"]');input.click();assert(!e.c.trade&&root().getElementById('confirm').open,'未等待确认');click('#confirm-cancel');assert(!e.c.trade,'取消未生效');});
- await test('补给前备份失败不会发放资源',()=>{page('storage');click('#lab-toggle');g.demoFreeze=true;click('[data-action="grant"][data-arg="1"]');const before=g.cookies,original=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='cookie-pilot:backups:v2')throw Error('模拟存储已满');return original.call(this,k,v);};try{click('#confirm-ok');assert(g.cookies===before,'未备份仍发放');}finally{Storage.prototype.setItem=original;g.demoFreeze=false;}});
+ await test('补给前备份失败不会发放资源',()=>{page('storage');click('details[data-state="storage-lab"] summary');click('#lab-toggle');g.demoFreeze=true;click('[data-action="grant"][data-arg="1"]');const before=g.cookies,original=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='cookie-pilot:backups:v2')throw Error('模拟存储已满');return original.call(this,k,v);};try{click('#confirm-ok');assert(g.cookies===before,'未备份仍发放');}finally{Storage.prototype.setItem=original;g.demoFreeze=false;}});
  await test('实验室正确补给，快照可导入',async()=>{page('storage');g.demoFreeze=true;const before=g.cookies;click('[data-action="grant"][data-arg="1"]');click('#confirm-ok');await delay(50);assert(Math.abs(g.cookies-before-g.unbuffedCps*60)<.1,'补给金额错误');const save=e.backups().find(x=>x.label==='实验室操作前');assert(save,'缺少重点快照');assert(g.ImportSaveCode(save.save),'快照无法导入');assert(Math.abs(g.cookies-before)<.1,'导入不一致');g.demoFreeze=false;});
  await test('广告显示可还原，主题可切换',()=>{e.set({ads:false,theme:'light'});assert(getComputedStyle(document.getElementById('support')).display!=='none','广告样式未撤销');assert(document.getElementById('cookie-pilot-v2').dataset.theme==='light','主题未切换');e.set({ads:true,theme:'dark'});assert(getComputedStyle(document.getElementById('support')).display==='none','未隐藏广告');});
  await test('前期存档显示解锁路径而不报错',()=>{window.Game=makePilotFixture('early');for(const key of['garden','magic','market','growth']){page(key);assert(!root().getElementById('main').textContent.includes('此模块暂时无法读取'),'前期模块错误');}window.Game=g;});
