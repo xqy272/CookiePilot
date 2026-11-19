@@ -6,10 +6,10 @@ const base=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const read=async name=>(await fs.readFile(path.join(base,name),'utf8')).replace(/\r\n/g,'\n');
 const write=async(name,text)=>{await fs.mkdir(path.dirname(path.join(base,name)),{recursive:true});await fs.writeFile(path.join(base,name),text);};
 const pkg=JSON.parse(await read('package.json')),version=pkg.version;
-const [core,engine,app,style]=await Promise.all(['src/core.js','src/engine.js','src/app.js','src/styles.css'].map(read));
+const [core,management,engine,app,style]=await Promise.all(['src/core.js','src/management.js','src/engine.js','src/app.js','src/styles.css'].map(read));
 if(!core.includes(`VERSION='${version}'`))throw Error('Source and package version differ');
 const escaped=JSON.stringify(style).replace(/</g,'\\u003c');
-const code=`/* Cookie Pilot ${version} · MIT · bundled locally; no remote executable code. */\n${core}\n;\n${engine}\n;\nwindow.CookiePilotStyles2=${escaped};\n${app}`;
+const code=`/* Cookie Pilot ${version} · MIT · bundled locally; no remote executable code. */\n${core}\n;\n${management}\n;\n${engine}\n;\nwindow.CookiePilotStyles2=${escaped};\n${app}`;
 const root='https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist';
 const channel=version.includes('-')?'beta':'stable';
 const header=`// ==UserScript==
@@ -35,7 +35,7 @@ const header=`// ==UserScript==
 `;
 const userscript=header+'\n'+code;
 await write(`dist/${channel}.user.js`,userscript);await write(`dist/${channel}.meta.js`,header);await write('CookiePilot.user.js',userscript);await write('extension/pilot.bundle.js',code);
-await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'加入万神殿阵容推荐与预算，以及糖块成熟收取和按路线连续分配的托管。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
+await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'加入统一玩法托管，覆盖花园育种、魔法、万神殿、股市、养龙、季节与皱纹虫，按存档显示下一步。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
 if(channel==='stable'){
   let mirror=false;try{const prior=JSON.parse(await read('dist/beta.json'));mirror=prior.version===version;}catch{mirror=true;}
   if(mirror){

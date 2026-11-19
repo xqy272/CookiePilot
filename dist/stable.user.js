@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cookie Pilot · 饼干领航员
 // @namespace    https://github.com/xqy272/CookiePilot
-// @version      2.3.0
+// @version      2.4.0
 // @description  全流程 Cookie Clicker 中文助手：现代工作台、采购、花园、法术、股市、成长、存档与在线更新。
 // @author       Cookie Pilot contributors
 // @match        https://orteil.dashnet.org/cookieclicker/
@@ -19,12 +19,16 @@
 // @downloadURL  https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js
 // ==/UserScript==
 
-/* Cookie Pilot 2.3.0 · MIT · bundled locally; no remote executable code. */
+/* Cookie Pilot 2.4.0 · MIT · bundled locally; no remote executable code. */
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='2.3.0', SUPPORTED='2.058';
+const VERSION='2.4.0', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
+const MANAGED_MODES={
+ events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield'],pantheon:['lineup'],
+ market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],ascension:['notice']
+};
 const LUMP_BAKING_CAP=100;
 const LUMP_UNLOCKS=[
  {building:'Temple',feature:'万神殿',rules:['pantheon','godzamok'],reason:'神灵可持续提供加成，适合挂机。'},
@@ -41,6 +45,7 @@ lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,lumpManaged
 wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
 godzamokBuildings:[],godzamokKeep:1,godzamokSell:100,seasonTarget:'',ascendTarget:365,heavenlyTarget:'',
 updateChannel:'stable',releaseBase:'https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist',updateCheck:true,backupMinutes:10,
+managed:{saveId:0,modes:{},gods:null,seasonLimit:4},
 ...Object.fromEntries(AUTO.map(k=>[k,false]))};
 const num=(v,d=0)=>Number.isFinite(Number(v))?Number(v):d;
 const clamp=(v,a,b,d=a)=>Math.min(b,Math.max(a,num(v,d)));
@@ -66,9 +71,26 @@ function config(input={},startup=false){
  for(const k of ['seedA','seedB','target','spell','heavenlyTarget'])if(typeof input[k]==='string')c[k]=input[k].slice(0,150);
  for(const k of ['blocked','protectedTiles','godzamokBuildings'])if(Array.isArray(input[k]))c[k]=[...new Set(input[k].filter(x=>typeof x==='string'||Number.isInteger(x)))].slice(0,1000);
  if(Array.isArray(input.gods))c.gods=[0,1,2].map(i=>Math.floor(clamp(input.gods[i],-1,30,-1)));
+ c.managed=managementConfig(input.managed);
  if(input.marketThresholds&&typeof input.marketThresholds==='object')for(const[k,v]of Object.entries(input.marketThresholds).slice(0,30))if(/^\d+$/.test(k)&&v&&typeof v==='object')c.marketThresholds[k]={buy:clamp(v.buy,0,1e9),sell:clamp(v.sell,0,1e9)};
  if(typeof input.releaseBase==='string'){try{const u=new URL(input.releaseBase);if(u.protocol==='https:'&&!u.username&&!u.password)c.releaseBase=u.href.replace(/\/$/,'');}catch{}}
- if(startup&&!c.remember)for(const k of AUTO)c[k]=false;return c;
+ if(startup&&!c.remember){
+  for(const k of AUTO)c[k]=false;
+  c.managed=managementConfig();
+ }
+ return c;
+}
+function managementConfig(input){
+ const saveId=Number.isSafeInteger(input?.saveId)&&input.saveId>0?input.saveId:0;
+ const modes={};
+ if(saveId)for(const [key,choices] of Object.entries(MANAGED_MODES)){
+  const mode=input.modes?.[key];
+  if(choices.includes(mode))modes[key]=mode;
+ }
+ const gods=modes.pantheon&&Array.isArray(input.gods)&&input.gods.length===3?
+  input.gods.map(id=>Number.isInteger(id)&&id>=0&&id<=30?id:-1):null;
+ const seasonLimit=Math.floor(clamp(input?.seasonLimit,1,12,4));
+ return{saveId,modes,gods,seasonLimit};
 }
 function migrate(old){return config({...old,click:old.autoClick,purchase:old.autoBuy,deer:old.reindeer,ads:old.adHide,remember:old.rememberAutomation},true);}
 const ready=g=>!!(g?.ready&&typeof g.ClickCookie==='function'&&Number.isFinite(g.cookies));
@@ -445,14 +467,381 @@ function wrinklerValue(g,w){let v=w.sucked*1.1*(w.type===1?3:1)*(1+.2*aura(g,'Dr
 function prestige(g){const before=num(g.HowMuchPrestige?.(g.cookiesReset)),after=num(g.HowMuchPrestige?.(num(g.cookiesReset)+num(g.cookiesEarned)));return Math.max(0,Math.floor(after)-Math.floor(before));}
 function semver(s){if(!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/.test(s))throw Error('无效版本号');return s.split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):x);}
 function newer(a,b){const x=semver(a),y=semver(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];if(x.length===3||y.length===3)return x.length===3&&y.length>3;return (x[3]===y[3]?x[4]>y[4]:x[3]==='rc');}
-return{VERSION,SUPPORTED,AUTO,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
+return{VERSION,SUPPORTED,AUTO,MANAGED_MODES,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
 });
 
 ;
-(function(root,factory){const C=typeof module==='object'&&module.exports?require('./core.js'):root.CookiePilotCore2;const api=factory(C);if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotEngine2=api;})(globalThis,function(C){
+/* Cookie Pilot · MIT · read-only plans for sustained gameplay. */
+(function(root,factory){
+ const common=typeof module==='object'&&module.exports;
+ const api=factory(common?require('./core.js'):root.CookiePilotCore2);
+ if(common)module.exports=api;
+ else root.CookiePilotManagement=api;
+})(globalThis,function(C){
+'use strict';
+
+const ruleOwners={
+ click:'events',golden:'events',wrath:'events',deer:'events',fortune:'events',
+ purchase:'purchase',harvest:'garden',plant:'garden',cast:'magic',pantheon:'pantheon',
+ trade:'market',dragon:'dragon',pet:'dragon',aura:'dragon',season:'season',wrinkler:'wrinklers'
+};
+const moduleForRule=rule=>ruleOwners[rule]||'';
+const configured=c=>Object.keys(c.managed.modes).length>0;
+const modes=(g,c)=>g?.fullDate===c.managed.saveId?c.managed.modes:{};
+const pending=c=>configured(c)||C.AUTO.some(rule=>c[rule]);
+function active(g,c){
+ const run=execution(g,c);
+ return C.AUTO.some(rule=>run[rule])||!!modes(g,c).ascension;
+}
+function owner(g,c,rule){
+ const id=ruleOwners[rule],active=modes(g,c);
+ if(active[id])return id;
+ if(active.season&&['deer','golden','wrinkler'].includes(rule)&&seasonActivity(g,rule))return'season';
+ return'';
+}
+function seasonActivity(g,rule){
+ if(rule==='deer')return g.season==='christmas'&&missingDrops(g,g.reindeerDrops).length>0;
+ if(g.season==='easter')return missingDrops(g,g.easterEggs).length>0;
+ return rule==='wrinkler'&&g.season==='halloween'&&missingDrops(g,g.halloweenDrops).length>0;
+}
+function wrinklerMode(g,c){
+ const m=modes(g,c);
+ return m.wrinklers||(m.season&&seasonActivity(g,'wrinkler')?'drops':'');
+}
+function execution(g,c){
+ const m=modes(g,c);
+ if(!Object.keys(m).length)return c;
+ return{...c,
+  ...(m.events?{click:true,clickMode:m.events==='burst'?'buff':'always',golden:true,deer:true,fortune:true,wrath:false}:{}),
+  ...(m.purchase?{purchase:true,purchaseMode:'efficient',target:'',bridgePurchase:false}:{}),
+  ...(m.garden?{harvest:true,plant:true,gardenMode:'seeds'}:{}),
+  ...(m.magic?{cast:true}:{}),
+  ...(m.pantheon?{pantheon:true,gods:c.managed.gods||[-1,-1,-1]}:{}),
+  ...(m.market?{trade:true,marketThresholds:{}}:{}),
+  ...(m.dragon?{dragon:true,pet:true,aura:m.dragon==='develop'}:{}),
+  ...(m.season?{season:true,deer:seasonActivity(g,'deer')||!!m.events||c.deer,
+   golden:seasonActivity(g,'golden')||!!m.events||c.golden}:{}),
+  ...(wrinklerMode(g,c)?{wrinkler:true,protectShiny:true}:{})
+ };
+}
+
+function pantheonLineup(g,c){
+ const m=C.mini(g,'Temple'),advice=C.pantheonAdvice(g,c);
+ if(!m||!advice)return null;
+ const lineup=[...m.slot];
+ const candidates=advice.gods.filter(id=>id>=0&&!lineup.includes(id));
+ return lineup.map(id=>id>=0?id:candidates.shift()??-1);
+}
+function purchasePlan(g,c,options={}){
+ const managed=modes(g,c);
+ if(managed.purchase){
+  for(const item of C.LUMP_UNLOCKS){
+   const object=g.Objects?.[item.building];
+   if(!object||object.amount||object.locked||
+      !(C.managesLumps(g,c)||item.rules.some(rule=>managed[moduleForRule(rule)])))continue;
+   const id='b:'+object.id;
+   if(c.blocked.includes(id))continue;
+   const plan=C.purchasePlan(g,{...c,bulk:1,purchaseMode:'target',target:id},
+    {bridgedTarget:options.bridgedTarget});
+   if(plan.target)return{...plan,unlock:item.feature};
+  }
+ }
+ return C.purchasePlan(g,c,options);
+}
+
+function spellPlan(g,c,lastCast,now=Date.now()){
+ const m=C.mini(g,'Wizard tower');
+ if(!m)return{reason:'巫师塔升至 1 级解锁魔法书'};
+ if(C.veil(g,c))return{reason:'面纱保护中'};
+ const roll=C.rng(String(g.seed)+'/'+m.spellsCastTotal)();
+ const known=(key)=>m.spells[key];
+ const success=(key)=>known(key)&&roll<1-m.getFailChance(known(key));
+ const hand='hand of fate',conjure='conjure baked goods',charm="haggler's charm";
+ const burst=C.cpsBuff(g)>=7||C.clickBuff(g);
+ const forecast=burst&&success(hand)?C.forecast(g,1)[0]:null;
+ let key,reason;
+ if(forecast?.good&&!forecast.fail&&m.getSpellCost(known(hand))+c.magicReserve<=m.magicM){
+  key=hand;
+  reason='叠加当前增益，收取本次召唤的金饼干';
+ }else if(success(conjure)&&m.getSpellCost(known(conjure))+c.magicReserve<=m.magicM){
+  key=conjure;
+  reason='预测成功，召唤饼干收益';
+ }else if(known(charm)){
+  key=charm;
+  reason='推进法术序列'+(success(charm)?'，升级价格降低 2%（1 分钟）':'，升级价格上涨 2%（1 小时）');
+ }else return{reason:'等待可用的低风险法术'};
+ return{...C.castPlan(g,{...c,spell:key,maxFail:100,castCondition:'mana',prediction:false},lastCast,now),key,detail:reason};
+}
+
+const recipesByGarden=new WeakMap();
+function gardenRecipes(m){
+ const plants=Object.values(m.plants);
+ const unlocked=plants.filter(plant=>plant.unlocked&&plant.plantable!==false);
+ const signature=plants.map(plant=>plant.unlocked?'1':'0').join('');
+ const cached=recipesByGarden.get(m);
+ if(cached?.signature===signature)return cached.recipes;
+ const recipes=[],counts=Object.fromEntries(plants.map(plant=>[plant.key,0]));
+ function collect(parents){
+  for(const [key,chance] of m.getMuts(counts,counts)){
+   if(!m.plants[key]||m.plants[key].unlocked||chance<=0)continue;
+   if(recipes.some(recipe=>recipe.key===key&&recipe.chance>=chance&&
+      recipe.parents.every(([plant,n])=>counts[plant.key]>=n)))continue;
+   recipes.push({key,chance,parents});
+  }
+ }
+ for(const a of unlocked){
+  for(let n=1;n<=8;n++){
+   counts[a.key]=n;
+   collect([[a,n]]);
+  }
+  counts[a.key]=0;
+ }
+ for(const [i,a] of unlocked.entries()){
+  for(const b of unlocked.slice(i+1)){
+   for(let n=1;n<8;n++){
+    counts[a.key]=n;
+    for(let j=1;j+n<=8;j++){
+     counts[b.key]=j;
+     collect([[a,n],[b,j]]);
+    }
+   }
+   counts[a.key]=counts[b.key]=0;
+  }
+ }
+ recipesByGarden.set(m,{signature,recipes});
+ return recipes;
+}
+
+function breedLayout(info,protectedTiles){
+ const {m,cells}=info;
+ const open=cells.filter(tile=>tile.unlocked);
+ const empty=open.filter(tile=>!tile.p&&!protectedTiles.includes(tile.key));
+ const step=Math.max(1,m.stepT);
+ const recipes=empty.length?gardenRecipes(m):[];
+ let best=null;
+ for(const center of empty){
+  const neighbors=open.filter(tile=>tile!==center&&Math.abs(tile.x-center.x)<=1&&Math.abs(tile.y-center.y)<=1);
+  const vacant=empty.filter(tile=>neighbors.includes(tile));
+  for(const recipe of recipes){
+   const parents=[];
+   let available=true;
+   let vacancies=0;
+   for(const [plant,count] of recipe.parents){
+    const planted=neighbors.filter(tile=>tile.p===plant).sort((a,b)=>a.eta-b.eta||b.death-a.death).slice(0,count);
+    parents.push(...planted);
+    for(let i=planted.length;i<count;i++){
+     const tile=vacant[vacancies++];
+     if(!tile){available=false;break;}
+     const factor=C.num(m.plotBoost?.[tile.y]?.[tile.x]?.[0],1);
+     const rate=(plant.ageTick+plant.ageTickR/2)*factor;
+     parents.push({...tile,p:plant,eta:plant.mature/Math.max(rate,.001)*step,death:Infinity,plant});
+    }
+    if(!available)break;
+   }
+   if(!available)continue;
+   const eta=Math.max(...parents.map(tile=>tile.eta));
+   if(parents.some(tile=>tile.death<=eta))continue;
+   const counts=Object.fromEntries(Object.keys(m.plants).map(key=>[key,0]));
+   for(const tile of neighbors)if(tile.p&&tile.death>eta)counts[tile.p.key]++;
+   for(const tile of parents)if(tile.plant)counts[tile.plant.key]++;
+   const mature={...counts};
+   for(const tile of neighbors)if(tile.p&&tile.death>eta&&tile.eta>eta)mature[tile.p.key]--;
+   const chance=m.getMuts(counts,mature).find(([key])=>key===recipe.key)?.[1];
+   if(!chance)continue;
+   const missing=parents.filter(tile=>tile.plant).map(tile=>({...tile,delay:Math.max(0,eta-tile.eta),cost:m.getCost(tile.plant)}));
+   const cost=missing.reduce((sum,tile)=>sum+tile.cost,0);
+   if(!Number.isFinite(cost)||cost<0)continue;
+   const score=eta/step+1/chance+missing.length;
+   if(!best||score<best.score||score===best.score&&cost<best.cost)best={...recipe,center,eta,missing,cost,score};
+  }
+ }
+ return{empty,best};
+}
+
+function gardenPlan(g,c,info=C.garden(g)){
+ if(!info)return{reason:'农场升至 1 级解锁花园'};
+ const {m,cells}=info;
+ if(m.freeze)return{reason:'花园已冻结'};
+ if(Object.values(m.plants).every(plant=>plant.unlocked))return{reason:'种子已收齐'};
+ const visible=cells.filter(tile=>tile.unlocked&&tile.p&&!c.protectedTiles.includes(tile.key));
+ const spores=['brownMold','crumbspore'].filter(key=>m.plants[key]&&!m.plants[key].unlocked);
+ const crop=visible.filter(tile=>!tile.p.unlocked||spores.length&&tile.p.key==='meddleweed')
+  .sort((a,b)=>Number(b.mature)-Number(a.mature)||(a.mature?a.death-b.death:a.eta-b.eta))[0];
+ if(crop)return crop.mature?{kind:'harvest',tile:crop,seconds:0,reason:'收获 '+C.tileName(crop)+' '+crop.p.name}:
+  {kind:'wait',seconds:Math.max(info.next,crop.eta),reason:'等待 '+C.tileName(crop)+' '+crop.p.name+' 成熟'};
+ const {empty,best}=breedLayout(info,c.protectedTiles);
+ const weed=m.plants.meddleweed;
+ const wild=weed&&!weed.unlocked&&empty.some(tile=>!cells.some(neighbor=>neighbor.p&&neighbor.unlocked&&
+  Math.abs(neighbor.x-tile.x)<=1&&Math.abs(neighbor.y-tile.y)<=1));
+ const keep=C.reserve(g,c),budget=Math.max(0,g.cookies-keep)*c.gardenSpend/100;
+ if(!best){
+  if(wild)return{reason:'留空等待自然长出的杂草'};
+  if(weed?.unlocked&&spores.length&&empty.length){
+   const cost=m.getCost(weed);
+   if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓种植'};
+   if(cost<=budget)return{kind:'plant',tile:{...empty[0],plant:weed,cost},keep,seconds:0,reason:'种一株杂草以培育孢子'};
+   return{reason:'等待杂草种植预算'};
+  }
+  return{reason:m.plantsUnlockedN>=m.plantsN?'种子已收齐':'等待可培育的种子、空格或解除保护'};
+ }
+ const name=m.plants[best.key].name;
+ const tile=best.missing.find(parent=>parent.delay<=m.stepT);
+ const target='培育 '+name+' · 留空 '+C.tileName(best.center);
+ if(!tile){
+  const delay=best.missing.length?Math.min(...best.missing.map(parent=>parent.delay)):0;
+  return{kind:'wait',reason:target+(delay?' · 等待亲本播种时机':' · 等待亲本生长和突变'),seconds:delay||Math.max(info.next,best.eta)};
+ }
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓种植'};
+ if(best.cost>budget)return{reason:target+' · 等待 '+C.fmt(best.cost)+' 饼干种植预算'};
+ return{kind:'plant',tile,keep,seconds:0,reason:target,cost:best.cost};
+}
+
+function marketOrder(g,c,hist,ledger){
+ const data=C.market(g,hist);
+ if(!data)return{reason:'银行升至 1 级解锁股市'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'爆发期间暂停交易'};
+ const managed=!!modes(g,c).market;
+ const liquid=Math.max(0,g.cookies-C.reserve(g,c));
+ const basisFor=row=>ledger[row.q.id]?.stock===row.q.stock?ledger[row.q.id]:null;
+ const invested=managed?data.goods.reduce((total,row)=>{
+  const lot=basisFor(row);
+  const cost=lot?C.num(lot.cookies,lot.cost*lot.stock*data.scale):0;
+  return total+C.num(cost);
+ },0):0;
+ const budget=Math.max(0,Math.min(liquid,(liquid+invested)*c.marketBudget/100-invested));
+ const orders=[];
+ let samples=0;
+ for(const row of data.goods){
+  const q=row.q,t=c.marketThresholds[q.id],custom=t&&t.buy<t.sell;
+  const sampled=row.samples>=c.marketMinSamples;
+  if(sampled||custom)samples++;
+  const low=custom?row.price<=t.buy:sampled&&row.percentile<=c.marketBuy;
+  const high=custom?row.price>=t.sell:sampled&&row.percentile>=c.marketSell;
+  const basis=basisFor(row)?.cost,units=q.stock;
+  if(high&&units>0&&Number.isFinite(basis)&&row.price>=basis*(1+c.marketProfit/100)&&q.last!==1){
+   orders.push({side:'sell',row,units,basis});
+  }
+  const quantity=Math.min(c.marketCap,row.capacity,Math.floor(budget/(row.buyCost||Infinity)));
+  if(low&&units===0&&q.last!==2&&quantity>0)orders.push({side:'buy',row,units:quantity});
+ }
+ if(managed)orders.sort((a,b)=>Number(b.side==='sell')-Number(a.side==='sell')||
+  (a.side===b.side&&a.side==='buy'?a.row.percentile-b.row.percentile:0));
+ return{data,orders,budget,reason:orders.length?'':!samples?
+  '等待每种商品积累 '+c.marketMinSamples+' 个报价样本':'等待报价、仓位和预算同时满足'};
+}
+
+function wrinklerPlan(g,c,managed=''){
+ const live=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
+ const limit=g.getWrinklersMax?.()??10;
+ const keep=managed==='drops'?0:managed==='yield'?Math.max(0,limit-1):c.wrinklerKeep;
+ if(live.length<=keep)return{reason:'保留 '+keep+' 只，目前 '+live.length+' 只'};
+ const target=live.filter(w=>!(managed||c.protectShiny)||w.type!==1).sort((a,b)=>b.sucked-a.sucked)[0];
+ if(!target)return{reason:'闪光皱纹虫受保护'};
+ const value=C.wrinklerValue(g,target);
+ if(managed==='yield'&&value<Math.max(1,C.num(g.unbuffedCps,g.cookiesPs))*1800){
+  return{reason:'等待单只储量达到 30 分钟基础产量'};
+ }
+ if(managed==='drops'&&target.sucked<=0)return{reason:'等待普通皱纹虫开始储存饼干'};
+ return{target,value};
+}
+function dragonPlan(g,c,mode){
+ if(!C.has(g,'A crumbly egg')){
+  return mode?collectUpgrade(g,c,'A crumbly egg','购买龙蛋','等待龙蛋解锁'):{reason:'等待获得龙蛋'};
+ }
+ const current=g.dragonLevel,cap=Math.min(c.dragonMax,g.dragonLevels.length-1,mode==='hatch'?5:Infinity);
+ if(current>=cap)return{reason:'已达到训练目标 '+cap+' 级'};
+ const step=g.dragonLevels[current],cost=current<5?1000000*2**current:0;
+ if(cost&&g.cookies-cost<C.reserve(g,c))return{reason:'训练受到饼干保留线限制'};
+ if(!step?.cost?.())return{reason:'等待材料 · '+C.plain(step?.costStr?.())};
+ return{kind:'train',current,cap,step,reason:'训练至 '+(current+1)+' 级 · '+C.plain(step.costStr?.())};
+}
+function dragonDrops(g){
+ return missingDrops(g,['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear']);
+}
+function growthAura(g,c){
+ if(g.dragonAura||g.dragonLevel<Math.min(c.dragonMax,g.dragonLevels.length-1))return null;
+ const name=g.dragonLevel>=19?'Radiant Appetite':c.click?'Dragon Cursor':'Breath of Milk';
+ const aura=Object.values(g.dragonAuras||{}).find(item=>item.name===name);
+ const id=aura?.id??Number(Object.keys(g.dragonAuras||{}).find(key=>g.dragonAuras[key]===aura));
+ const highest=[...(g.ObjectsById||[])].reverse().find(object=>object.amount>0);
+ return Number.isInteger(id)&&id>0&&g.dragonLevel>=id+4&&g.dragonAura2!==id&&highest?.amount>1?{id,aura,highest}:null;
+}
+
+function missingDrops(g,drops){
+ return (drops||[]).filter(name=>!C.has(g,name)&&!g.HasUnlocked?.(name));
+}
+function collectUpgrade(g,c,name,action,waiting){
+ const upgrade=g.Upgrades?.[name];
+ if(!upgrade?.unlocked)return{reason:waiting};
+ if(upgrade.isVaulted?.())return{reason:'保险库保护 · '+(upgrade.dname||name)};
+ const cost=upgrade.getPrice();
+ if(!Number.isFinite(cost)||cost<0||g.cookies-cost<C.reserve(g,c)){
+  return{reason:'等待购买预算 · '+(upgrade.dname||name)};
+ }
+ return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||name)};
+}
+function seasonPlan(g,c){
+ const groups=[
+  {key:'christmas',missing:missingDrops(g,[...(g.santaDrops||[]),...(g.reindeerDrops||[])])},
+  {key:'easter',missing:missingDrops(g,g.easterEggs)},
+  {key:'halloween',missing:missingDrops(g,g.halloweenDrops)},
+  {key:'valentines',missing:(g.heartDrops||[]).filter(name=>!C.has(g,name))}
+ ];
+ const canWrinkle=!!g.elderWrath||g.wrinklers?.some(w=>w.phase>0);
+ const current=groups.find(group=>group.key===g.season&&group.missing.length);
+ if(current&&(current.key!=='halloween'||canWrinkle)){
+  if(current.key==='valentines'){
+   const name=current.missing[0];
+   return collectUpgrade(g,c,name,'购买情人节饼干','等待达到情人节饼干解锁条件 · '+(g.Upgrades?.[name]?.dname||name));
+  }
+  if(g.season==='christmas'&&current.missing.some(name=>g.santaDrops?.includes(name))){
+   const next=C.num(g.santaLevel)+1;
+   if(!C.has(g,'A festive hat'))return collectUpgrade(g,c,'A festive hat','购买节日帽以培养圣诞老人','等待圣诞节解锁节日帽');
+   if(next<=14){
+    const cost=next**next;
+    return g.cookies>cost&&g.cookies-cost>=C.reserve(g,c)?{kind:'santa',next,cost,reason:'培养圣诞老人以解锁节日礼物'}:
+     {reason:'等待圣诞老人培养预算'};
+   }
+  }
+  return{reason:'继续收集 '+(g.seasons?.[current.key]?.name||current.key)+' · 缺 '+current.missing.length+' 件掉落'};
+ }
+ const available=groups.filter(group=>group.missing.length&&g.seasons?.[group.key]);
+ if(!available.length)return{reason:'已收集支持的季节掉落'};
+ const candidates=available.filter(group=>group.key!=='halloween'||canWrinkle);
+ if(!candidates.length)return{reason:'等待老奶奶末日开启，万圣节掉落需要皱纹虫'};
+ if(C.num(g.seasonUses)>=c.managed.seasonLimit)return{reason:'本轮季节切换已达 '+c.managed.seasonLimit+' 次上限'};
+ for(const group of candidates){
+  const season=g.seasons[group.key],upgrade=g.Upgrades?.[season.trigger];
+  if(!upgrade?.unlocked||upgrade.isVaulted?.())continue;
+  const cost=upgrade.getPrice();
+  if(!Number.isFinite(cost)||cost<0||g.cookies-cost<C.reserve(g,c))return{reason:'等待 '+season.name+' 切换预算'};
+  return{kind:'switch',key:group.key,upgrade,cost,reason:'切换至 '+season.name+' · 缺 '+group.missing.length+' 件掉落'};
+ }
+ return{reason:'等待季节切换器解锁'};
+}
+
+return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan};
+});
+
+;
+(function(root,factory){
+ const common=typeof module==='object'&&module.exports;
+ const api=factory(common?require('./core.js'):root.CookiePilotCore2,common?require('./management.js'):root.CookiePilotManagement);
+ if(common)module.exports=api;
+ else root.CookiePilotEngine2=api;
+})(globalThis,function(C,M){
 'use strict';
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
-const lumpKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode'];
+const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode','managed'];
+function withSpecialMenu(g,tab,fn){
+ if(g.specialTab||!g.ToggleSpecialMenu)return fn();
+ g.specialTab=tab;
+ try{return fn();}
+ finally{
+  g.ToggleSpecialMenu(0);
+  g.specialTab='';
+ }
+}
 class Engine{
  constructor(getGame,storage,hooks={}){this.getGame=getGame;this.storage=storage;this.hooks=hooks;this.paused=false;this.locked=false;this.states={};this.logs=[];this.next={};this.clicks=0;this.picked=0;this.disposed=false;this.hist={};this.ledger={};this.marketTick=null;this.lastBackup=Date.now();this.lastCast=0;this.godzamokBuff=null;this.rebuy=[];this.protectedSnapshot=null;
   this.actions=0;
@@ -464,14 +853,14 @@ class Engine{
   this.startupHold=false;
   let saved;try{saved=JSON.parse(storage.getItem(SETTINGS)||'null');if(saved?.schema>2)throw Error('设置来自更新版本');this.c=saved?C.config(saved):C.migrate(JSON.parse(storage.getItem('cookie-pilot:settings:v1')||'{}'));const h=JSON.parse(storage.getItem(HISTORY)||'{}');if(h&&typeof h==='object'){this.hist=h.hist||{};this.ledger=h.ledger||{};this.historyContext=h.context;}
    this.paused=storage.getItem(PAUSE)==='true';
-   this.startupHold=!this.paused&&!this.c.remember&&C.AUTO.some(key=>this.c[key]);
+   this.startupHold=!this.paused&&!this.c.remember&&M.pending(this.c);
    if(this.startupHold)this.paused=true;
   }
   catch(e){this.c=C.config();this.paused=true;this.log('设置恢复失败：'+e.message);}
   this.savedVersion=saved?.version||'1';
  }
  get g(){return this.getGame();}
- env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:C.AUTO.some(k=>this.c[k])&&!this.locked};}
+ env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:!this.locked&&M.active(this.g,this.c)};}
  set(update){this.c=C.config({...this.c,...update});this.persist(update);this.hooks.change?.();}
  setPaused(value){
   this.paused=value;
@@ -482,24 +871,24 @@ class Engine{
   this.log(value?'手动暂停自动化':'继续自动化，按当前游戏状态重新检查');
   return true;
  }
- savedLumpSettings(){
+ savedSharedSettings(){
   try{
    const saved=JSON.parse(this.storage.getItem(SETTINGS));
    if(saved?.schema!==2)return null;
    const settings=C.config(saved);
-   return Object.fromEntries(lumpKeys.map(key=>[key,settings[key]]));
+   return Object.fromEntries(sharedKeys.map(key=>[key,settings[key]]));
   }catch{return null;}
  }
- syncLumpSettings(){
-  const saved=this.savedLumpSettings();
+ syncSharedSettings(){
+  const saved=this.savedSharedSettings();
   if(!saved)return false;
   Object.assign(this.c,saved);
   return true;
  }
  persist(update={}){
   try{
-   const saved=this.savedLumpSettings();
-   if(saved)for(const key of lumpKeys)if(!Object.hasOwn(update,key))this.c[key]=saved[key];
+   const saved=this.savedSharedSettings();
+   if(saved)for(const key of sharedKeys)if(!Object.hasOwn(update,key))this.c[key]=saved[key];
    if(this.c.lumpManaged||!this.c.lumpGoal)this.c.lumpLevel=false;
    this.storage.setItem(SETTINGS,JSON.stringify({...this.c,version:C.VERSION}));
   }catch(e){this.paused=true;this.log('设置保存失败，自动化已暂停：'+e.message);}
@@ -509,32 +898,56 @@ class Engine{
  backups(){try{const rows=JSON.parse(this.storage.getItem(BACKUPS)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&typeof x.save==='string'&&Number.isFinite(x.at)).slice(0,15):[];}catch{return[];}}
  backup(label='手动备份',pin=false){const g=this.g;if(!C.ready(g)||g.OnAscend||g.AscendTimer>0)throw Error('游戏未就绪或正在转生');const save=g.WriteSave(1);if(typeof save!=='string'||!save.length||save.length>2000000)throw Error('未取得有效存档');this.backupSerial=(this.backupSerial||0)+1;const entry={id:Date.now()+'-'+this.backupSerial,at:Date.now(),label,save,settings:structuredClone(this.c),pin,version:String(g.version)};const old=this.backups();const pinned=old.filter(x=>x.pin).slice(0,pin?4:5),normal=old.filter(x=>!x.pin).slice(0,9);this.storage.setItem(BACKUPS,JSON.stringify([entry,...pinned,...normal]));this.lastBackup=Date.now();return entry;}
  manualGate(){const reason=C.gate(this.g,this.c);if(reason)throw Error(reason);}
- attempt(k,fn){
-  if(!this.c[k])return this.state(k,'已关闭');
-  const reason=C.gate(this.g,this.c,this.env());
+ attempt(k,fn,config=this.c){
+  if(!config[k])return this.state(k,'已关闭');
+  const reason=C.gate(this.g,config,this.env());
   if(reason)return this.state(k,reason);
   if(['noClick','both'].includes(this.c.challenge)&&k==='click')return this.state(k,'无点击挑战保护');
   if(['noUpgrade','both'].includes(this.c.challenge)&&['season','dragon','lumpLevel'].includes(k))return this.state(k,'无升级挑战保护');
   try{return fn.call(this);}
   catch(error){
-   this.c[k]=false;
-   this.persist({[k]:false});
+   const managed=M.owner(this.g,this.c,k);
+   if(managed){
+    this.syncSharedSettings();
+    const {modes,...settings}=this.c.managed;
+    const remaining={...modes};
+    delete remaining[managed];
+    this.set({managed:{...settings,modes:remaining},[k]:false});
+   }else{
+    this.c[k]=false;
+    this.persist({[k]:false});
+   }
    this.state(k,'发生错误，已关闭');
    const name=({lumpLevel:'糖块升级',lumpManaged:'糖块托管',lump:'糖块收取',pantheon:'神灵调换'})[k]||k;
    this.log(name+' 已停止：'+error.message);
    return false;
   }
  }
- click(now=performance.now()){this.attempt('click',()=>{if(C.veil(this.g,this.c))return this.state('click','面纱保护中');if(this.c.clickMode==='buff'&&!C.clickBuff(this.g))return this.state('click','等待点击增益');if(now<(this.next.click||0))return;this.next.click=now+1000/this.c.rate;const before=this.g.cookieClicks;this.g.ClickCookie();this.clicks+=Math.max(0,this.g.cookieClicks-before);this.state('click','运行中 · '+this.c.rate+' 次/秒目标');});}
+ click(now=performance.now()){
+  const g=this.g,c=M.execution(g,this.c);
+  this.attempt('click',()=>{
+   if(C.veil(g,c))return this.state('click','面纱保护中');
+   if(c.clickMode==='buff'&&!C.clickBuff(g))return this.state('click','等待点击增益');
+   if(now<(this.next.click||0))return;
+   this.next.click=now+1000/c.rate;
+   const before=g.cookieClicks;
+   g.ClickCookie();
+   this.clicks+=Math.max(0,g.cookieClicks-before);
+   this.state('click','运行中 · '+c.rate+' 次/秒目标');
+  },c);
+ }
  persistMarket(){try{this.storage.setItem(HISTORY,JSON.stringify({hist:this.hist,ledger:this.ledger,context:this.historyContext}));}catch{}}
- sampleMarket(){const g=this.g,m=C.mini(g,'Bank');if(!m)return;const context=[g.startDate,g.Objects.Bank.level,g.dragonAura,g.dragonAura2].join(':');if(context!==this.historyContext){this.hist={};this.ledger={};this.marketTick=null;this.historyContext=context;}
-  const marker=m.tickT!==undefined?String(m.tickT):Math.floor(Date.now()/60000);if(this.marketTick!==null&&num(m.tickT)<num(this.marketTick)||this.marketTick===null||m.tickT===undefined&&marker!==this.marketTick){for(const q of m.goodsById){const rows=Array.isArray(this.hist[q.id])?this.hist[q.id]:[];rows.push(m.getGoodPrice(q));this.hist[q.id]=rows.filter(Number.isFinite).slice(-2000);}if(this.locked||!C.AUTO.some(key=>this.c[key]))this.persistMarket();}this.marketTick=marker;
+ sampleMarket(){const g=this.g,m=C.mini(g,'Bank');if(!m)return;const context=[g.startDate,g.Objects.Bank.level,g.dragonAura,g.dragonAura2].join(':');if(context!==this.historyContext){
+  if(String(this.historyContext).split(':')[0]!==String(g.startDate))this.ledger={};
+  this.hist={};this.marketTick=null;this.historyContext=context;
+ }
+  const marker=m.tickT!==undefined?String(m.tickT):Math.floor(Date.now()/60000);if(this.marketTick!==null&&num(m.tickT)<num(this.marketTick)||this.marketTick===null||m.tickT===undefined&&marker!==this.marketTick){for(const q of m.goodsById){const rows=Array.isArray(this.hist[q.id])?this.hist[q.id]:[];rows.push(m.getGoodPrice(q));this.hist[q.id]=rows.filter(Number.isFinite).slice(-2000);}if(this.locked||!M.active(g,this.c))this.persistMarket();}this.marketTick=marker;
  }
  pulse(now=Date.now()){
   if(this.disposed)return;
   if(C.ready(this.g)&&this.savedVersion!==C.VERSION&&!this.g.OnAscend&&!this.g.AscendTimer){try{this.backup('升级前设置与存档',true);this.savedVersion=C.VERSION;this.persist();this.log('已迁移至 '+C.VERSION);}catch(e){this.paused=true;this.state('system','迁移备份失败');}}
   this.sampleMarket();
-  const active=C.AUTO.some(key=>this.c[key])&&!C.gate(this.g,this.c,this.env());
+  const active=M.active(this.g,this.c)&&!C.gate(this.g,this.c,this.env());
   const elapsed=now-this.lastPulse;
   if(active&&this.lastPulse&&elapsed>0){
    if(elapsed>1500){
@@ -550,6 +963,7 @@ class Engine{
   if(now-this.clickSample.at>=1000){
    this.clickSample={at:now,total:this.clicks,rate:(this.clicks-this.clickSample.total)*1000/(now-this.clickSample.at)};
   }
+  const c=M.execution(this.g,this.c);
   for(const [key,name] of [['golden','金饼干'],['wrath','愤怒饼干'],['deer','驯鹿']]){
    this.attempt(key,()=>{
     const g=this.g;
@@ -565,7 +979,7 @@ class Engine{
      this.log('拾取 '+name+' ×'+picked,picked);
     }
     return this.state(key,'等待自然事件');
-   });
+   },c);
   }
   this.attempt('fortune',()=>{
    const g=this.g,effect=g.TickerEffect;
@@ -574,17 +988,39 @@ class Engine{
     if(g.TickerEffect!==effect){this.picked++;this.log('收取幸运新闻',1);}
    }
    return this.state('fortune','等待幸运新闻');
-  });
-  if(now>=(this.next.slow||0)){this.next.slow=now+1000;
+  },c);
+  if(now>=(this.next.slow||0)){
+   this.next.slow=now+1000;
+   if(M.configured(this.c))this.syncSharedSettings();
+   const g=this.g;
+   this.checkMilestones(g);
    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
-    if(k==='lump'&&C.managesLumps(this.g,this.c))continue;
-    this.attempt(k,fn);
+    if(k==='lump'&&C.managesLumps(g,this.c))continue;
+    if(k==='harvest'&&M.modes(g,this.c).garden)continue;
+    const run=M.execution(g,this.c);
+    this.attempt(k,()=>fn.call(this,run),run);
    }
   }
   if(C.ready(this.g)&&!this.g.OnAscend&&!this.g.AscendTimer&&!this.g.promptOn&&now-this.lastBackup>=this.c.backupMinutes*60000){try{this.backup('自动快照');}catch(e){this.lastBackup=now;this.log('自动备份失败：'+e.message);}}
  }
- purchase(){
-  const g=this.g,c=this.c;
+ checkMilestones(g){
+  const modes=M.modes(g,this.c);
+  if(!Object.keys(modes).length||C.gate(g,this.c,this.env()))return;
+  if(modes.pantheon&&!this.c.managed.gods){
+   const gods=M.pantheonLineup(g,M.execution(g,this.c));
+   if(gods)this.set({managed:{...this.c.managed,gods}});
+  }
+  const reached=modes.ascension&&this.c.ascendTarget>0&&C.prestige(g)>=this.c.ascendTarget;
+  const milestone=[g.startDate,this.c.ascendTarget].join(':');
+  if(reached&&milestone!==this.ascendNotice){
+   this.ascendNotice=milestone;
+   const message='转生目标已达到 · 新增声望 '+C.fmt(C.prestige(g),0);
+   this.log(message);
+   this.hooks.notice?.(message);
+  }
+ }
+ purchase(c=this.c){
+  const g=this.g;
   if(g.buyMode===-1)return this.state('purchase','商店处于出售模式');
   if(this.rebuy.length)return this.restoreBuildings();
   if(c.holdCombo&&C.clickBuff(g))return this.state('purchase','爆发期间保留资源');
@@ -592,7 +1028,7 @@ class Engine{
    this.set({purchaseMode:'efficient',target:''});
    return this.state('purchase','规划升级已完成，等待下一笔采购');
   }
-  const plan=C.purchasePlan(g,c,{bridgedTarget:this.bridgedTarget});
+  const plan=M.purchasePlan(g,c,{bridgedTarget:this.bridgedTarget});
   const item=plan.next;
   if(!item)return this.state('purchase',plan.reason);
   const building=item.id.startsWith('b:');
@@ -621,8 +1057,9 @@ class Engine{
   this.log('收获 '+C.tileName(tile)+' '+tile.p.name+(locked&&tile.p.unlocked?' · 解锁新种子':''),1);
   return this.state('harvest','已收获 '+tile.p.name);
  }
- plant(){
-  const g=this.g,c=this.c,info=C.garden(g);
+ plant(c=this.c){
+  const g=this.g,info=C.garden(g);
+  if(M.modes(g,c).garden)return this.breed(c,info);
   const {tiles,keep,budget,reason}=C.plantingPlan(g,c,info);
   if(reason)return this.state('plant',reason);
   let used=0;
@@ -641,44 +1078,80 @@ class Engine{
   if(planted.length)this.log('花园补种 '+planted.join('、')+' · 花费 '+C.fmt(used),planted.length);
   return this.state('plant',planted.length?'补种 '+planted.length+' 格':'等待空格、种子或种植预算');
  }
- trade(){
-  const g=this.g,c=this.c,data=C.market(g,this.hist);
-  if(!data)return this.state('trade','银行升至 1 级解锁股市');
-  if(c.holdCombo&&C.clickBuff(g))return this.state('trade','爆发期间暂停交易');
-  const budget=Math.max(0,g.cookies-C.reserve(g,c))*c.marketBudget/100;
-  for(const row of data.goods){
-   const q=row.q,t=c.marketThresholds[q.id],custom=t&&t.buy<t.sell;
-   const sampled=row.samples>=c.marketMinSamples;
-   const low=custom?row.price<=t.buy:sampled&&row.percentile<=c.marketBuy;
-   const high=custom?row.price>=t.sell:sampled&&row.percentile>=c.marketSell;
+ breed(c,info){
+  const g=this.g,plan=M.gardenPlan(g,c,info),tile=plan.tile;
+  if(!tile)return this.state('plant',plan.reason);
+  const field=info.m;
+  if(plan.kind==='harvest'){
+   const previous=field.plot[tile.y][tile.x];
+   field.harvest(tile.x,tile.y);
+   if(field.plot[tile.y][tile.x]===previous)throw Error('游戏未确认花园收获');
+   this.log('花园托管 · '+plan.reason,1);
+  }else{
+   if(field.freeze||!field.isTileUnlocked(tile.x,tile.y)||field.plot[tile.y][tile.x][0]!==0||
+      c.protectedTiles.includes(tile.key)||g.cookies-field.getCost(tile.plant)<plan.keep)return this.state('plant','地块或种植预算已变');
+   const before=g.cookies;
+   field.useTool(tile.plant.id,tile.x,tile.y);
+   if(field.plot[tile.y][tile.x][0]!==tile.plant.id+1)throw Error('游戏未确认花园播种');
+   this.log('花园托管 · '+C.tileName(tile)+' 种下 '+tile.plant.name+' · 花费 '+C.fmt(before-g.cookies),1);
+  }
+  this.state('harvest',plan.reason);
+  return this.state('plant',plan.reason);
+ }
+ trade(c=this.c){
+  const g=this.g;
+  const {data,orders,reason}=M.marketOrder(g,c,this.hist,this.ledger);
+  if(!data)return this.state('trade',reason);
+  for(const {q} of data.goods){
    const lot=this.ledger[q.id];
    if(lot&&lot.stock!==q.stock){delete this.ledger[q.id];this.persistMarket();}
-   const basis=this.ledger[q.id]?.cost;
-   const units=q.stock;
-   if(high&&units>0&&Number.isFinite(basis)&&row.price>=basis*(1+c.marketProfit/100)&&q.last!==1&&data.m.sellGood(q.id,units)){
+  }
+  for(const {side,row,units,basis} of orders){
+   const q=row.q;
+   if(side==='sell'&&data.m.sellGood(q.id,units)){
     delete this.ledger[q.id];
     this.persistMarket();
     this.log('股市卖出 '+q.name+' ×'+units+' · 扣除买入手续费净额 $'+C.fmt((row.price-basis)*units),1);
     return this.state('trade','已卖出 '+q.name);
    }
-   const n=Math.min(c.marketCap-units,row.capacity-units,Math.floor(budget/(row.buyCost||Infinity)));
-   if(low&&units===0&&q.last!==2&&n>0&&data.m.buyGood(q.id,n)){
-    this.ledger[q.id]={stock:q.stock,cost:row.price*data.overhead};
+   const before=g.cookies;
+   if(side==='buy'&&data.m.buyGood(q.id,units)){
+    this.ledger[q.id]={stock:q.stock,cost:row.price*data.overhead,cookies:Math.max(0,before-g.cookies)};
     this.persistMarket();
     this.log('股市买入 '+q.name+' ×'+q.stock+' · 含费单价 $'+C.fmt(row.price*data.overhead),1);
     return this.state('trade','已买入 '+q.name);
    }
   }
-  return this.state('trade','等待报价与样本');
+  return this.state('trade',reason||'等待游戏确认交易');
  }
- cast(){
-  const {m,spell,seconds,reason}=C.castPlan(this.g,this.c,this.lastCast);
+ cast(c=this.c){
+  const g=this.g,managed=M.modes(g,c).magic;
+  const {m,spell,seconds,reason,key,detail}=managed?M.spellPlan(g,c,this.lastCast):C.castPlan(g,c,this.lastCast);
   if(reason)return this.state('cast',reason+(Number.isFinite(seconds)?' · 约 '+C.time(seconds):''));
   this.backup('施法前');
+  if(managed){
+   if(!this.managedExecution('magic',g))return this.state('cast','魔法书托管已暂停');
+   const fresh=M.spellPlan(g,M.execution(g,this.c),this.lastCast);
+   if(fresh.reason||fresh.key!==key||fresh.m!==m)return this.state('cast',fresh.reason||'施法条件已变化');
+  }
+  const before=key==='hand of fate'?new Set(g.shimmers):null;
   this.lastCast=Date.now();
   if(!m.castSpell(spell))return this.state('cast','游戏拒绝施法');
-  this.log('施放 '+spell.name+' · 剩 '+C.fmt(m.magic)+' 魔力',1);
+  this.log('施放 '+spell.name+' · 剩 '+C.fmt(m.magic)+' 魔力'+(detail?' · '+detail:''),1);
+  if(before&&!C.veil(g,c)){
+   const summoned=g.shimmers.find(item=>!before.has(item)&&item.type==='golden'&&!item.wrath&&!item.popped&&!item.dead);
+   if(summoned){
+    summoned.pop();
+    if(summoned.popped||summoned.dead||!g.shimmers.includes(summoned)){
+     this.picked++;
+     this.log('魔法书托管 · 收取本次召唤的金饼干',1);
+    }
+   }
+  }
   return this.state('cast','已施法');
+ }
+ managedExecution(id,g){
+  return this.syncSharedSettings()&&!!M.modes(g,this.c)[id]&&!this.spendingGate(g);
  }
  lump(managed=false){
   const g=this.g,window=C.lumpWindow(g);
@@ -687,7 +1160,7 @@ class Engine{
   if(window.overripe)return this.state('lump','等待游戏自动掉落');
   const previous=g.lumpT,balance=g.lumps;
   this.backup('糖块收取前');
-  if(managed&&(!this.syncLumpSettings()||!C.managesLumps(g,this.c)||this.lumpExecutionGate(g))){
+  if(managed===true&&(!this.syncSharedSettings()||!C.managesLumps(g,this.c)||this.spendingGate(g))){
    return this.state('lump','托管收取已暂停');
   }
   const fresh=C.lumpWindow(g);
@@ -703,22 +1176,22 @@ class Engine{
  }
  lumpManaged(){
   const g=this.g;
-  if(!this.syncLumpSettings()||!this.c.lumpManaged)return this.state('lumpManaged','已关闭');
+  if(!this.syncSharedSettings()||!this.c.lumpManaged)return this.state('lumpManaged','已关闭');
   if(!C.managesLumps(g,this.c))return this.state('lumpManaged',C.lumpRoutePlan(g,this.c).reason);
-  if(!this.lumpExecutionGate(g))this.lump(true);
+  if(!this.spendingGate(g))this.lump(true);
   return this.spendLumpLevel('lumpManaged',C.lumpRoutePlan);
  }
- lumpExecutionGate(g){
+ spendingGate(g){
   if(this.g!==g)return'当前存档已变化，重新检查';
   return C.gate(g,this.c,this.env())||(this.storage.getItem(PAUSE)==='true'?'全部自动化已暂停':'');
  }
  spendLumpLevel(key,readPlan){
   const g=this.g;
-  if(!this.syncLumpSettings()||!this.c[key])return this.state(key,'等级目标已变化，重新检查');
-  const gate=this.lumpExecutionGate(g);
+  if(!this.syncSharedSettings()||!this.c[key])return this.state(key,'等级目标已变化，重新检查');
+  const gate=this.spendingGate(g);
   if(gate)return this.state(key,gate);
   if(key==='lumpLevel'&&['noUpgrade','both'].includes(this.c.challenge))return this.state(key,'无升级挑战保护');
-  const plan=readPlan(g,this.c);
+  const plan=readPlan(g,M.execution(g,this.c));
   const finish=()=>{
    this.set({lumpLevel:false});
    this.log('糖块目标达成 · '+plan.name+' '+plan.target+' 级');
@@ -728,13 +1201,13 @@ class Engine{
   if(plan.status!=='ready')return this.state(key,plan.reason);
   this.backup('挂机糖块升级前',true);
 
-  if(!this.syncLumpSettings()||!this.c[key]){
+  if(!this.syncSharedSettings()||!this.c[key]){
    return this.state(key,'等级目标已变化，重新检查');
   }
-  const latestGate=this.lumpExecutionGate(g);
+  const latestGate=this.spendingGate(g);
   if(latestGate)return this.state(key,latestGate);
   if(['noUpgrade','both'].includes(this.c.challenge))return this.state(key,'无升级挑战保护');
-  const fresh=readPlan(g,this.c);
+  const fresh=readPlan(g,M.execution(g,this.c));
   if(fresh.status!=='ready')return this.state(key,fresh.reason);
   if(fresh.object!==plan.object||fresh.current!==plan.current||fresh.target!==plan.target){
    return this.state(key,'等级目标已变化，重新检查');
@@ -754,45 +1227,61 @@ class Engine{
   if(key==='lumpLevel'&&object.level>=fresh.target)return finish();
   return this.state(key,fresh.name+'已升至 '+object.level+' 级');
  }
- wrinkler(){
-  const g=this.g,c=this.c,list=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
-  if(list.length<=c.wrinklerKeep)return this.state('wrinkler','保留 '+c.wrinklerKeep+' 只');
-  const target=list.filter(w=>!c.protectShiny||w.type!==1).sort((a,b)=>b.sucked-a.sucked)[0];
-  if(!target)return this.state('wrinkler','闪光保护中');
+ wrinkler(c=this.c){
+  const g=this.g;
+  const {target,value,reason}=M.wrinklerPlan(g,c,M.wrinklerMode(g,c));
+  if(!target)return this.state('wrinkler',reason);
   target.hp=0;
-  this.log('收取'+(target.type===1?'闪光':'普通')+'皱纹虫 · 估算 '+C.fmt(C.wrinklerValue(g,target))+' 饼干',1);
+  this.log('收取'+(target.type===1?'闪光':'普通')+'皱纹虫 · 估算 '+C.fmt(value)+' 饼干',1);
   return this.state('wrinkler','等待游戏结算');
  }
- pet(){
+ pet(c=this.c){
   const g=this.g;
-  if(!C.has(g,'Pet the dragon')||g.dragonLevel<4)return this.state('pet','等待解锁抚摸龙');
-  if(g.specialTab!=='dragon')return this.state('pet','打开原游戏的龙面板后运行');
-  const missing=['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear'].filter(name=>!C.has(g,name)&&!g.HasUnlocked?.(name));
+  const managed=M.modes(g,c).dragon;
+  if(!C.has(g,'Pet the dragon')||g.dragonLevel<(managed?8:4))return this.state('pet','等待解锁龙掉落');
+  const missing=M.dragonDrops(g);
   if(!missing.length)return this.state('pet','本轮龙掉落已收集');
-  g.ClickSpecialPic();
+  if(g.specialTab==='dragon')g.ClickSpecialPic();
+  else if(managed&&!g.specialTab&&g.ToggleSpecialMenu)withSpecialMenu(g,'dragon',()=>{
+   g.ToggleSpecialMenu(1);
+   g.ClickSpecialPic();
+  });
+  else return this.state('pet',managed?'等待当前特殊面板收起':'打开原游戏的龙面板后运行');
   const found=missing.filter(name=>C.has(g,name)||g.HasUnlocked?.(name));
   if(found.length)this.log('龙掉落：'+found.map(name=>g.Upgrades[name]?.dname||name).join('、'),found.length);
   return this.state('pet','抚摸龙 · 每秒一次');
  }
- dragon(){
-  const g=this.g,before=g.dragonLevel;
-  if(!C.has(g,'A crumbly egg'))return this.state('dragon','尚未获得龙蛋');
-  if(before>=Math.min(this.c.dragonMax,g.dragonLevels.length-1))return this.state('dragon','达到目标等级');
-  const step=g.dragonLevels[before];
-  if(!step?.cost?.())return this.state('dragon','等待材料 · '+C.plain(step?.costStr?.()));
-  if(before<5&&g.cookies-1000000*2**before<C.reserve(g,this.c))return this.state('dragon','龙升级受到库存保留线限制');
-  this.backup('龙升级前');
-  g.UpgradeDragon();
-  if(g.dragonLevel<=before)return this.state('dragon','等待游戏确认训练');
+ dragon(c=this.c){
+  const g=this.g,mode=M.modes(g,c).dragon;
+  const plan=M.dragonPlan(g,c,mode);
+  if(!plan.kind)return this.state('dragon',plan.reason);
+  this.backup(plan.kind==='buy'?'购买龙蛋前':'龙升级前');
+  if(mode){
+   if(!this.managedExecution('dragon',g))return this.state('dragon','龙托管已暂停');
+   const run=M.execution(g,this.c),fresh=M.dragonPlan(g,run,M.modes(g,run).dragon);
+   if(fresh.kind!==plan.kind||fresh.current!==plan.current||fresh.upgrade!==plan.upgrade)return this.state('dragon',fresh.reason);
+  }
+  if(plan.kind==='buy'){
+   plan.upgrade.buy();
+   if(!C.has(g,plan.upgrade.name))throw Error('游戏未确认购买龙蛋');
+   this.log('养龙托管 · '+plan.reason,1);
+   return this.state('dragon','已购买龙蛋');
+  }
+  if(mode)withSpecialMenu(g,'dragon',()=>g.UpgradeDragon());
+  else g.UpgradeDragon();
+  if(g.dragonLevel<=plan.current)return this.state('dragon','等待游戏确认训练');
   this.log('龙升至 '+g.dragonLevel+' 级',1);
   return this.state('dragon','升级完成');
  }
- pantheon(){
-  const {m,moves,status,reason}=C.pantheonPlan(this.g,this.c.gods,this.c.swapReserve);
+ pantheon(c=this.c){
+  const g=this.g,managed=M.modes(g,c).pantheon;
+  const {m,moves,status,reason}=C.pantheonPlan(g,c.gods,c.swapReserve);
   if(status!=='ready')return this.state('pantheon',reason);
   const {slot,god}=moves[0];
   this.backup('神灵调换前');
-  const fresh=C.pantheonPlan(this.g,this.c.gods,this.c.swapReserve);
+  if(managed&&!this.managedExecution('pantheon',g))return this.state('pantheon','万神殿托管已暂停');
+  const run=M.execution(this.g,this.c);
+  const fresh=C.pantheonPlan(this.g,run.gods,run.swapReserve);
   if(fresh.status!=='ready'||fresh.m!==m||fresh.moves[0].god!==god||fresh.moves[0].slot!==slot){
    return this.state('pantheon',fresh.reason);
   }
@@ -803,20 +1292,55 @@ class Engine{
   this.log('设置神灵 '+C.plain(god.name)+' · 剩余 '+m.swaps+' 次调换',1);
   return this.state('pantheon','已配置槽位 '+(slot+1));
  }
- aura(){const g=this.g;for(let slot=0;slot<2;slot++){const target=this.c['aura'+slot],current=slot?g.dragonAura2:g.dragonAura;if(target<0||target===current)continue;if(!g.dragonAuras?.[target]||g.dragonLevel<target+4||slot===1&&g.dragonLevel<g.dragonLevels.length-1)return this.state('aura','目标光环或第二槽位未解锁');if(target!==0&&target===(slot?g.dragonAura:g.dragonAura2))return this.state('aura','两个槽位不能配置同一光环');this.backup('光环切换前');const highest=[...g.ObjectsById].reverse().find(o=>o.amount>0);if(highest)highest.sacrifice(1);if(slot)g.dragonAura2=target;else g.dragonAura=target;g.recalculateGains=1;this.log('光环切换 '+(g.dragonAuras[target].dname||g.dragonAuras[target].name));return this.state('aura','已切换光环');}this.state('aura','光环方案已匹配');}
- season(){
-  const g=this.g,key=this.c.seasonTarget;
+ aura(c=this.c){
+  const g=this.g,managed=M.modes(g,c).dragon;
+  if(managed){
+   const plan=M.growthAura(g,c);
+   if(!plan)return this.state('aura','保留现有光环或等待训练完成与牺牲预算');
+   this.backup('龙托管配置光环前');
+   if(!this.managedExecution('dragon',g)||M.modes(g,this.c).dragon!=='develop')return this.state('aura','光环托管已暂停');
+   const fresh=M.growthAura(g,M.execution(g,this.c));
+   if(fresh?.id!==plan.id||fresh.highest!==plan.highest)return this.state('aura','光环或牺牲条件已变化');
+   fresh.highest.sacrifice(1);
+   g.dragonAura=fresh.id;
+   g.recalculateGains=1;
+   this.log('龙托管 · 启用 '+(fresh.aura.dname||fresh.aura.name),1);
+   return this.state('aura','已启用主光环');
+  }
+  for(let slot=0;slot<2;slot++){const target=c['aura'+slot],current=slot?g.dragonAura2:g.dragonAura;if(target<0||target===current)continue;if(!g.dragonAuras?.[target]||g.dragonLevel<target+4||slot===1&&g.dragonLevel<g.dragonLevels.length-1)return this.state('aura','目标光环或第二槽位未解锁');if(target!==0&&target===(slot?g.dragonAura:g.dragonAura2))return this.state('aura','两个槽位不能配置同一光环');this.backup('光环切换前');const highest=[...g.ObjectsById].reverse().find(o=>o.amount>0);if(highest)highest.sacrifice(1);if(slot)g.dragonAura2=target;else g.dragonAura=target;g.recalculateGains=1;this.log('光环切换 '+(g.dragonAuras[target].dname||g.dragonAuras[target].name));return this.state('aura','已切换光环');}
+  return this.state('aura','光环方案已匹配');
+ }
+ season(c=this.c){
+  const g=this.g,key=c.seasonTarget;
+  if(M.modes(g,c).season)return this.collectSeason(c);
   if(!key||g.season===key)return this.state('season',key?'已处于目标季节':'请选择目标季节');
   const season=g.seasons?.[key],upgrade=g.Upgrades?.[season?.trigger];
   if(!upgrade?.unlocked)return this.state('season','季节切换尚未解锁');
-  if(g.cookies-upgrade.getPrice()<C.reserve(g,this.c))return this.state('season','切换成本超过预算');
+  if(g.cookies-upgrade.getPrice()<C.reserve(g,c))return this.state('season','切换成本超过预算');
   this.backup('季节切换前');
   upgrade.buy();
   if(g.season!==key)return this.state('season','等待游戏确认季节切换');
   this.log('切换季节 '+season.name,1);
   return this.state('season','已切换季节');
  }
- godzamok(){const g=this.g,c=this.c;if(this.rebuy.length)return this.restoreBuildings();const active=Object.values(g.buffs||{}).find(b=>num(b.multClick,1)>1);if(!active){this.godzamokBuff=null;return this.state('godzamok','等待点击爆发');}if(this.godzamokBuff===active)return this.state('godzamok','本次增益已执行');if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');const list=c.godzamokBuildings.map(id=>g.ObjectsById[Number(id)]).filter(Boolean).map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(x=>x.n>0);if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');const buyback=list.reduce((s,{o,n})=>s+o.getSumPrice(n),0);if(g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');this.backup('Godzamok 出售前',true);this.godzamokBuff=active;this.rebuy=list.map(({o})=>({id:o.id,target:o.amount}));for(const {o,n}of list)o.sell(n,1);this.log('Godzamok 出售已执行，开始回购');this.restoreBuildings();}
+ collectSeason(c){
+  const g=this.g,plan=M.seasonPlan(g,c);
+  if(!plan.kind)return this.state('season',plan.reason);
+  this.backup('季节托管花费前');
+  if(!this.managedExecution('season',g))return this.state('season','季节托管已暂停');
+  const fresh=M.seasonPlan(g,M.execution(g,this.c));
+  if(fresh.kind!==plan.kind||fresh.upgrade!==plan.upgrade||fresh.next!==plan.next)return this.state('season',fresh.reason);
+  if(plan.kind==='santa'){
+   withSpecialMenu(g,'santa',()=>g.UpgradeSanta());
+   if(g.santaLevel!==plan.next)throw Error('游戏未确认圣诞老人升级');
+  }else{
+   plan.upgrade.buy();
+   if(plan.kind==='switch'?g.season!==plan.key:!C.has(g,plan.upgrade.name))throw Error('游戏未确认季节托管购买');
+  }
+  this.log('季节托管 · '+plan.reason+' · 花费 '+C.fmt(fresh.cost),1);
+  return this.state('season',plan.reason);
+ }
+ godzamok(c=this.c){const g=this.g;if(this.rebuy.length)return this.restoreBuildings();const active=Object.values(g.buffs||{}).find(b=>num(b.multClick,1)>1);if(!active){this.godzamokBuff=null;return this.state('godzamok','等待点击爆发');}if(this.godzamokBuff===active)return this.state('godzamok','本次增益已执行');if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');const list=c.godzamokBuildings.map(id=>g.ObjectsById[Number(id)]).filter(Boolean).map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(x=>x.n>0);if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');const buyback=list.reduce((s,{o,n})=>s+o.getSumPrice(n),0);if(g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');this.backup('Godzamok 出售前',true);this.godzamokBuff=active;this.rebuy=list.map(({o})=>({id:o.id,target:o.amount}));for(const {o,n}of list)o.sell(n,1);this.log('Godzamok 出售已执行，开始回购');this.restoreBuildings();}
  restoreBuildings(){const g=this.g;if(g.buyMode===-1)return this.state('godzamok','等待退出出售模式后回购');const next=this.rebuy[0];if(!next)return;const o=g.ObjectsById[next.id],n=Math.max(0,next.target-o.amount);if(!n){this.rebuy.shift();return;}const cost=o.getSumPrice(n);if(g.cookies-cost<C.reserve(g,this.c))return this.state('godzamok','回购预算不足，采购等待');o.buy(n);if(o.amount>=next.target)this.rebuy.shift();this.state('godzamok',this.rebuy.length?'继续回购':'回购完成');}
  dispose(){this.disposed=true;}
 }
@@ -825,10 +1349,11 @@ return{Engine,SETTINGS,BACKUPS,HISTORY,PAUSE};
 });
 
 ;
-window.CookiePilotStyles2=":host {\n  all: initial;\n  color-scheme: dark;\n  --bg: #19231d;\n  --surface: #212f27;\n  --soft: #2a3930;\n  --fg: #eef2e8;\n  --muted: #afc0b1;\n  --line: #3c5044;\n  --accent: #b4ddb9;\n  --accent-bg: #30483a;\n  --on-accent: #15291e;\n  --warm: #f2cf97;\n  --warm-bg: #493a24;\n  --bad: #f5b7a6;\n  --pad: 16px;\n  --workbench-width: 600px;\n  --workbench-height: 480px;\n  --workbench-margin: 12px;\n  color: var(--fg);\n  font: 14px/1.5 \"Segoe UI\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif;\n}\n:host([data-theme=light]) {\n  color-scheme: light;\n  --bg: #f7f7ef;\n  --surface: #fffef9;\n  --soft: #eeefe6;\n  --fg: #213128;\n  --muted: #536458;\n  --line: #dce3d6;\n  --accent: #245943;\n  --on-accent: #fffefa;\n  --accent-bg: #e3eee0;\n  --warm: #76501c;\n  --warm-bg: #f6ecd7;\n  --bad: #a24434;\n}\n* { box-sizing: border-box; }\n[hidden] { display: none !important; }\nh1, h2, h3, p, dl, dd { margin: 0; }\nh2 { font-size: 24px; line-height: 1.2; font-weight: 650; letter-spacing: -.025em; }\nh3 { font-size: 14px; line-height: 1.35; font-weight: 650; }\nsmall, .muted { color: var(--muted); }\nsmall { font-size: 11px; }\na { color: var(--accent); text-underline-offset: 2px; }\nbutton, input, select, textarea { font: inherit; }\nbutton, a, input, select { touch-action: manipulation; }\nbutton {\n  cursor: pointer;\n  color: var(--fg);\n  background: var(--soft);\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  min-height: 30px;\n  padding: 5px 9px;\n  font-size: 12px;\n  text-align: start;\n}\nbutton:hover:not(:disabled) { background: var(--accent-bg); }\nbutton:disabled { cursor: default; opacity: .5; }\n:is(button,input,select,textarea,a,summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\nbutton svg { width: 15px; height: 15px; flex: 0 0 15px; }\nbutton.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 650; }\nbutton.primary:hover:not(:disabled) { filter: brightness(.92); background: var(--accent); }\nbutton.ghost { color: var(--accent); background: transparent; border-color: transparent; }\nbutton.danger { color: var(--bad); }\n\n.backdrop {\n  position: fixed;\n  inset: 0;\n  display: grid;\n  place-items: center;\n  padding: var(--workbench-margin);\n  overflow: hidden;\n  background: #09140f69;\n  pointer-events: auto;\n}\n.window {\n  inline-size: min(var(--workbench-width), calc(100dvw - var(--workbench-margin) * 2));\n  block-size: min(var(--workbench-height), calc(100dvh - var(--workbench-margin) * 2));\n  display: grid;\n  grid-template-rows: auto auto auto minmax(0,1fr);\n  overflow: hidden;\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 13px;\n  box-shadow: 0 18px 65px #09140f73;\n}\n.head, .workbench-nav { background: var(--surface); border-bottom: 1px solid var(--line); }\n.head { min-height: 50px; padding: 7px var(--pad); display: flex; align-items: center; gap: 8px; }\n.head-brand { display: flex; align-items: center; gap: 8px; }\n.head-brand small { display: block; line-height: 1.15; }\n.head .grow { flex: 1; }\n.wordmark { font-size: 14px; line-height: 1.25; font-weight: 700; white-space: nowrap; }\n.brand-icon {\n  inline-size: 30px;\n  block-size: 30px;\n  flex: none;\n  display: grid;\n  place-items: center;\n  border-radius: 7px;\n  background: var(--accent-bg);\n  color: var(--accent);\n}\n.brand-icon svg { width: 17px; height: 17px; }\n.head-action { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }\n#close { padding-inline: 7px; }\n.runtime { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }\n.runtime::before { content: \"\"; inline-size: 6px; block-size: 6px; background: currentColor; border-radius: 50%; }\n.runtime[data-tone=good] { color: var(--accent); }\n.runtime[data-tone=warn] { color: var(--warm); }\n.workbench-nav {\n  display: grid;\n  grid-template-columns: repeat(6,minmax(0,1fr));\n  gap: 2px;\n  padding-inline: var(--pad);\n}\n.nav, .category-tabs button {\n  border: 0;\n  border-radius: 0;\n  border-bottom: 2px solid transparent;\n  background: transparent;\n  color: var(--muted);\n  padding: 5px 7px 6px;\n  min-height: 34px;\n  white-space: nowrap;\n}\n.nav { display: flex; justify-content: center; align-items: center; gap: 5px; min-height: 38px; }\n.nav:hover:not(:disabled), .category-tabs button:hover:not(:disabled) { background: var(--soft); }\n.nav svg { width: 13px; height: 13px; flex-basis: 13px; }\n.nav[aria-current=page], .category-tabs button[aria-pressed=true] {\n  color: var(--accent);\n  border-color: var(--accent);\n  font-weight: 650;\n}\n.view-controls {\n  grid-row: 3;\n  min-width: 0;\n  background: var(--bg);\n  padding: 6px var(--pad);\n  border-bottom: 1px solid var(--line);\n}\n.view-controls .category-tabs, .view-controls .rule-tabs {\n  flex-wrap: nowrap;\n  margin: 0;\n  overflow-x: auto;\n  scrollbar-width: thin;\n}\n.view-controls .category-tabs { border: 0; }\n.view-controls .category-tabs button { margin: 0; flex: none; }\n.view-controls .rule-tabs { padding-top: 5px; }\n.view-controls .rule-tabs button { min-height: 26px; flex: none; }\n.view-controls button:focus-visible { outline-offset: -2px; }\n.main {\n  grid-row: 4;\n  min-width: 0;\n  min-height: 0;\n  padding: 12px var(--pad) 16px;\n  overflow: auto;\n  overscroll-behavior: contain;\n  scrollbar-gutter: stable;\n  scrollbar-width: thin;\n  scrollbar-color: var(--line) transparent;\n}\n.main:focus { outline: none; }\n.rule-heading, .heading, .card-title, .block-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 5px 9px;\n  flex-wrap: wrap;\n}\n.rule-heading, .heading { margin-bottom: 11px; }\n.heading p { margin-top: 5px; font-size: 12px; color: var(--muted); }\n.rule-heading button { min-height: 27px; }\n.category-tabs, .rule-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }\n.category-tabs { border-bottom: 1px solid var(--line); margin-bottom: 10px; }\n.category-tabs button { margin-bottom: -1px; padding-inline: 5px; }\n.rule-tabs { margin: 0 0 10px; }\n.rule-tabs button[aria-pressed=true] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 650; }\n.rule-layout { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 10px; align-items: start; }\n.rule-card {\n  min-width: 0;\n  background: var(--surface);\n  border: 1px solid var(--line);\n  border-radius: 10px;\n  padding: 11px 12px;\n}\n.rule-card .check { min-height: 31px; }\n.rule-copy, .rule-reason { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.rule-reason { margin-top: 5px; }\n.rule-copy { margin: 7px 0 5px; }\n.facts { margin-top: 7px; }\n.facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 9px; border-top: 1px solid var(--line); padding: 8px 0; font-size: 12px; }\n.facts dt { color: var(--muted); flex: 0 1 auto; }\n.facts dd { font-weight: 600; text-align: end; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; min-width: 0; }\n.tag { display: inline-flex; border-radius: 5px; padding: 2px 6px; font-size: 11px; background: var(--soft); color: var(--muted); white-space: nowrap; }\n.tag.good { background: var(--accent-bg); color: var(--accent); }\n.tag.warn { background: var(--warm-bg); color: var(--warm); }\n.overview { display: grid; gap: 11px; }\n.overview .card-title .ghost { padding: 2px 4px; min-height: 27px; }\n.overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.overview-stats {\n  display: grid;\n  grid-template-columns: repeat(3,minmax(0,1fr));\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  background: var(--surface);\n}\n.overview-stats > div { padding: 8px 10px; min-width: 0; }\n.overview-stats > div + div { border-inline-start: 1px solid var(--line); }\n.overview-stats dt { color: var(--muted); font-size: 11px; }\n.overview-stats dd { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n.overview-next { min-height: 70px; }\n.next-job {\n  display: grid;\n  grid-template-columns: minmax(0,1fr) auto auto;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-height: 33px;\n  border: 0;\n  background: transparent;\n  border-radius: 0;\n  padding: 5px 3px;\n  color: var(--fg);\n}\n.next-job + .next-job { border-top: 1px solid var(--line); }\n.next-job :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.next-job .eta { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }\n.next-job svg { color: var(--accent); }\n.guard-summary {\n  width: 100%;\n  display: grid;\n  grid-template-columns: auto minmax(0,1fr) auto;\n  align-items: center;\n  gap: 7px;\n  background: var(--warm-bg);\n  color: var(--warm);\n  border-color: transparent;\n}\n.guard-summary:hover:not(:disabled) { background: var(--warm-bg); filter: brightness(.94); }\n.guard-summary small { color: inherit; white-space: nowrap; }\n.group-shortcuts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }\n.group-shortcuts button { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 5px; align-items: center; min-height: 34px; padding: 4px 7px; background: var(--surface); }\n.group-shortcuts button.enabled svg { color: var(--accent); }\n.group-shortcuts button:hover:not(:disabled) { background: var(--accent-bg); }\n.group-shortcuts small { font-variant-numeric: tabular-nums; white-space: nowrap; }\n.queue-card + .queue-card { margin-top: 10px; }\n.queue-card h3 { margin-bottom: 5px; }\n\n.plan-layout { margin-top: 11px; }\n.lump-advice { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding-inline: 9px; }\n.lump-advice .row { border-bottom: 0; }\n.lump-advice .row > svg { color: var(--accent); }\n.route-next { margin-block: 8px; padding: 8px; background: var(--soft); border-radius: 6px; font-size: 12px; }\n.route-next p { color: var(--muted); margin-top: 2px; }\n.pantheon-advice { display: grid; gap: 6px; margin-top: 6px; }\n.pantheon-advice h4 { margin: 0; font-size: 13px; }\n.pantheon-advice .note { margin-top: 0; }\n.spirit-list { margin: 0; padding: 0; list-style: none; }\n.spirit-list li { padding-block: 5px; border-block-start: 1px solid var(--line); font-size: 12px; }\n.spirit-list small { display: block; }\n.lump-routes { margin-top: 8px; }\n.lump-routes button.selected { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }\n.target-cost { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; margin: 10px 0 7px; font-size: 12px; font-variant-numeric: tabular-nums; }\n.target-cost span { color: var(--muted); }\n.settings-layout { margin-top: 10px; }\n.settings-actions, .update-links { margin-top: 8px; }\n.update-card .field { max-width: 220px; }\n.candidates { margin-top: 6px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }\n.candidate {\n  width: 100%;\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 5px;\n  border: 0;\n  border-top: 1px solid var(--line);\n  background: transparent;\n  border-radius: 0;\n}\n.candidate :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.candidate[aria-pressed=true] { background: var(--accent-bg); box-shadow: inset 2px 0 var(--accent); }\n.rule-card > .field { margin-top: 6px; }\n.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }\n.block { margin-top: 16px; }\n.block-head { margin-bottom: 7px; }\n.block-head > span { font-size: 11px; color: var(--muted); }\n.row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }\n.row > svg { width: 15px; height: 15px; color: var(--muted); flex: 0 0 15px; }\n.row-info { flex: 1 1 auto; min-width: 0; }\n.row strong { font-size: 13px; }\n.row p, .note { margin-top: 3px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.note { margin-top: 8px; }\n.summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }\n.summary .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }\n.summary label { color: var(--muted); font-size: 11px; }\n.cols, .fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }\n.fields { margin: 7px 0; }\n.field { display: grid; align-content: start; gap: 3px; min-width: 0; }\n.field > span { color: var(--muted); font-size: 11px; }\ninput[type=text], input[type=number], input[type=url], select, textarea {\n  min-width: 0;\n  width: 100%;\n  color: var(--fg);\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 6px;\n  padding: 5px 7px;\n  font-size: 12px;\n}\nselect option { background: var(--surface); color: var(--fg); }\n.check { display: flex; align-items: center; gap: 7px; min-height: 29px; font-size: 12px; cursor: pointer; }\n.check input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }\n.warning { font-size: 12px; color: var(--warm); background: var(--warm-bg); border-radius: 6px; padding: 8px; margin: 8px 0; }\n.empty { color: var(--muted); font-size: 12px; padding: 10px 0; }\n.empty svg { width: 22px; height: 22px; margin-bottom: 5px; color: var(--accent); }\n.table-wrap { overflow-x: auto; }\n.table { width: 100%; border-collapse: collapse; font-size: 12px; }\n.table th, .table td { padding: 7px 5px; border-bottom: 1px solid var(--line); vertical-align: middle; }\n.table th { color: var(--muted); font-weight: 400; text-align: start; white-space: nowrap; }\n.table td.num { text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }\n.table td small { display: block; }\n.chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0; }\n.chip { font-size: 11px; padding: 3px 6px; background: var(--soft); border-radius: 5px; }\n.garden { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 4px; max-width: 336px; margin-bottom: 7px; }\n.tile { aspect-ratio: 1; min-width: 0; min-height: 29px; padding: 0; position: relative; display: grid; place-content: center; justify-items: center; }\n.tile .symbol { font-size: 17px; line-height: 1.15; color: var(--accent); }\n.tile .plant-label { font-size: 9px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }\n.tile.mature { background: var(--accent-bg); }\n.tile.selected { border-color: var(--accent); }\n.tile.protected::after { content: \"·\"; position: absolute; color: var(--warm); font-size: 22px; line-height: 1; top: 0; right: 3px; }\n.tile-info { min-height: 38px; margin-bottom: 5px; }\n.log { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }\n.log time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }\n.advanced { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 7px; }\n.advanced summary { cursor: pointer; font-size: 13px; font-weight: 600; }\n.forecast, .collection { display: flex; gap: 5px; flex-wrap: wrap; margin: 7px 0; }\n.forecast > div, .collection span { padding: 4px 6px; border-radius: 5px; background: var(--soft); font-size: 11px; }\n.forecast span, .forecast small { display: block; }\n.forecast .good, .collection .owned { color: var(--accent); }\n.forecast .bad { color: var(--bad); }\n.numeric-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px 7px; }\n.toast {\n  position: fixed;\n  bottom: 18px;\n  left: 50%;\n  transform: translateX(-50%);\n  max-width: min(580px,calc(100vw - 22px));\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  box-shadow: 0 8px 24px #0005;\n  padding: 8px 12px;\n  pointer-events: auto;\n}\n.confirm {\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  max-width: min(430px,calc(100vw - 24px));\n  padding: 16px;\n  pointer-events: auto;\n}\n.confirm::backdrop { background: #0b1712ac; }\n.confirm { inline-size: 370px; max-block-size: calc(100dvh - 24px); overflow-y: auto; }\n#confirm-text { margin: 9px 0 13px; }\n.confirm p { margin-top: 7px; white-space: pre-line; color: var(--muted); }\n.confirm .actions { justify-content: flex-end; }\n.entry {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n  min-height: 25px;\n  color: var(--accent);\n  background: var(--surface);\n  border-color: var(--line);\n  padding: 3px 7px;\n  font-size: 12px;\n  font-weight: 650;\n}\n.entry svg { width: 13px; height: 13px; flex-basis: 13px; }\n:host([data-density=compact]) .row { padding-block: 5px; }\n:host([data-density=compact]) .main { padding-block: 10px; }\n@media (max-width: 560px) {\n  .cols { grid-template-columns: minmax(0,1fr); }\n  .category-tabs button { padding-inline: 4px; }\n}\n@media (max-width: 500px) {\n  :host { --pad: 10px; --workbench-margin: 7px; }\n  .rule-layout { grid-template-columns: minmax(0,1fr); }\n  .head small { display: none; }\n  .nav { padding-inline: 2px; flex-direction: column; gap: 2px; font-size: 11px; }\n  .group-shortcuts { grid-template-columns: repeat(2,minmax(0,1fr)); }\n  .field :is(input,select) { font-size: 16px; }\n}\n@media (max-width: 360px) {\n  .fields { grid-template-columns: minmax(0,1fr); }\n  .head { gap: 4px; }\n}\n@media (pointer: coarse) {\n  :is(.head-action,.nav,.category-tabs button,.rule-tabs button,.check,.next-job,.group-shortcuts button,.guard-summary) {\n    min-height: 44px;\n  }\n}\n";
+window.CookiePilotStyles2=":host {\n  all: initial;\n  color-scheme: dark;\n  --bg: #19231d;\n  --surface: #212f27;\n  --soft: #2a3930;\n  --fg: #eef2e8;\n  --muted: #afc0b1;\n  --line: #3c5044;\n  --accent: #b4ddb9;\n  --accent-bg: #30483a;\n  --on-accent: #15291e;\n  --warm: #f2cf97;\n  --warm-bg: #493a24;\n  --bad: #f5b7a6;\n  --pad: 16px;\n  --workbench-width: 600px;\n  --workbench-height: 480px;\n  --workbench-margin: 12px;\n  color: var(--fg);\n  font: 14px/1.5 \"Segoe UI\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif;\n}\n:host([data-theme=light]) {\n  color-scheme: light;\n  --bg: #f7f7ef;\n  --surface: #fffef9;\n  --soft: #eeefe6;\n  --fg: #213128;\n  --muted: #536458;\n  --line: #dce3d6;\n  --accent: #245943;\n  --on-accent: #fffefa;\n  --accent-bg: #e3eee0;\n  --warm: #76501c;\n  --warm-bg: #f6ecd7;\n  --bad: #a24434;\n}\n* { box-sizing: border-box; }\n[hidden] { display: none !important; }\nh1, h2, h3, p, dl, dd { margin: 0; }\nh2 { font-size: 24px; line-height: 1.2; font-weight: 650; letter-spacing: -.025em; }\nh3 { font-size: 14px; line-height: 1.35; font-weight: 650; }\nsmall, .muted { color: var(--muted); }\nsmall { font-size: 11px; }\na { color: var(--accent); text-underline-offset: 2px; }\nbutton, input, select, textarea { font: inherit; }\nbutton, a, input, select { touch-action: manipulation; }\nbutton {\n  cursor: pointer;\n  color: var(--fg);\n  background: var(--soft);\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  min-height: 30px;\n  padding: 5px 9px;\n  font-size: 12px;\n  text-align: start;\n}\nbutton:hover:not(:disabled) { background: var(--accent-bg); }\nbutton:disabled { cursor: default; opacity: .5; }\n:is(button,input,select,textarea,a,summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\nbutton svg { width: 15px; height: 15px; flex: 0 0 15px; }\nbutton.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 650; }\nbutton.primary:hover:not(:disabled) { filter: brightness(.92); background: var(--accent); }\nbutton.ghost { color: var(--accent); background: transparent; border-color: transparent; }\nbutton.danger { color: var(--bad); }\n\n.backdrop {\n  position: fixed;\n  inset: 0;\n  display: grid;\n  place-items: center;\n  padding: var(--workbench-margin);\n  overflow: hidden;\n  background: #09140f69;\n  pointer-events: auto;\n}\n.window {\n  inline-size: min(var(--workbench-width), calc(100dvw - var(--workbench-margin) * 2));\n  block-size: min(var(--workbench-height), calc(100dvh - var(--workbench-margin) * 2));\n  display: grid;\n  grid-template-rows: auto auto auto minmax(0,1fr);\n  overflow: hidden;\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 13px;\n  box-shadow: 0 18px 65px #09140f73;\n}\n.head, .workbench-nav { background: var(--surface); border-bottom: 1px solid var(--line); }\n.head { min-height: 50px; padding: 7px var(--pad); display: flex; align-items: center; gap: 8px; }\n.head-brand { display: flex; align-items: center; gap: 8px; }\n.head-brand small { display: block; line-height: 1.15; }\n.head .grow { flex: 1; }\n.wordmark { font-size: 14px; line-height: 1.25; font-weight: 700; white-space: nowrap; }\n.brand-icon {\n  inline-size: 30px;\n  block-size: 30px;\n  flex: none;\n  display: grid;\n  place-items: center;\n  border-radius: 7px;\n  background: var(--accent-bg);\n  color: var(--accent);\n}\n.brand-icon svg { width: 17px; height: 17px; }\n.head-action { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }\n#close { padding-inline: 7px; }\n.runtime { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }\n.runtime::before { content: \"\"; inline-size: 6px; block-size: 6px; background: currentColor; border-radius: 50%; }\n.runtime[data-tone=good] { color: var(--accent); }\n.runtime[data-tone=warn] { color: var(--warm); }\n.workbench-nav {\n  display: grid;\n  grid-template-columns: repeat(6,minmax(0,1fr));\n  gap: 2px;\n  padding-inline: var(--pad);\n}\n.nav, .category-tabs button {\n  border: 0;\n  border-radius: 0;\n  border-bottom: 2px solid transparent;\n  background: transparent;\n  color: var(--muted);\n  padding: 5px 7px 6px;\n  min-height: 34px;\n  white-space: nowrap;\n}\n.nav { display: flex; justify-content: center; align-items: center; gap: 5px; min-height: 38px; }\n.nav:hover:not(:disabled), .category-tabs button:hover:not(:disabled) { background: var(--soft); }\n.nav svg { width: 13px; height: 13px; flex-basis: 13px; }\n.nav[aria-current=page], .category-tabs button[aria-pressed=true] {\n  color: var(--accent);\n  border-color: var(--accent);\n  font-weight: 650;\n}\n.view-controls {\n  grid-row: 3;\n  min-width: 0;\n  background: var(--bg);\n  padding: 6px var(--pad);\n  border-bottom: 1px solid var(--line);\n}\n.view-controls .category-tabs, .view-controls .rule-tabs {\n  flex-wrap: nowrap;\n  margin: 0;\n  overflow-x: auto;\n  scrollbar-width: thin;\n}\n.view-controls .category-tabs { border: 0; }\n.view-controls .category-tabs button { margin: 0; flex: none; }\n.view-controls .rule-tabs { padding-top: 5px; }\n.view-controls .rule-tabs button { min-height: 26px; flex: none; }\n.view-controls button:focus-visible { outline-offset: -2px; }\n.main {\n  grid-row: 4;\n  min-width: 0;\n  min-height: 0;\n  padding: 12px var(--pad) 16px;\n  overflow: auto;\n  overscroll-behavior: contain;\n  scrollbar-gutter: stable;\n  scrollbar-width: thin;\n  scrollbar-color: var(--line) transparent;\n}\n.main:focus { outline: none; }\n.rule-heading, .heading, .card-title, .block-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 5px 9px;\n  flex-wrap: wrap;\n}\n.rule-heading, .heading { margin-bottom: 11px; }\n.heading p { margin-top: 5px; font-size: 12px; color: var(--muted); }\n.rule-heading button { min-height: 27px; }\n.category-tabs, .rule-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }\n.category-tabs { border-bottom: 1px solid var(--line); margin-bottom: 10px; }\n.category-tabs button { margin-bottom: -1px; padding-inline: 5px; }\n.rule-tabs { margin: 0 0 10px; }\n.rule-tabs button[aria-pressed=true] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 650; }\n.rule-layout { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 10px; align-items: start; }\n.rule-card {\n  min-width: 0;\n  background: var(--surface);\n  border: 1px solid var(--line);\n  border-radius: 10px;\n  padding: 11px 12px;\n}\n.rule-card .check { min-height: 31px; }\n.rule-copy, .rule-reason { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.rule-reason { margin-top: 5px; }\n.rule-copy { margin: 7px 0 5px; }\n.facts { margin-top: 7px; }\n.facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 9px; border-top: 1px solid var(--line); padding: 8px 0; font-size: 12px; }\n.facts dt { color: var(--muted); flex: 0 1 auto; }\n.facts dd { font-weight: 600; text-align: end; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; min-width: 0; }\n.tag { display: inline-flex; border-radius: 5px; padding: 2px 6px; font-size: 11px; background: var(--soft); color: var(--muted); white-space: nowrap; }\n.tag.good { background: var(--accent-bg); color: var(--accent); }\n.tag.warn { background: var(--warm-bg); color: var(--warm); }\n.overview { display: grid; gap: 11px; }\n.overview .card-title .ghost { padding: 2px 4px; min-height: 27px; }\n.overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.overview-stats {\n  display: grid;\n  grid-template-columns: repeat(3,minmax(0,1fr));\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  background: var(--surface);\n}\n.overview-stats > div { padding: 8px 10px; min-width: 0; }\n.overview-stats > div + div { border-inline-start: 1px solid var(--line); }\n.overview-stats dt { color: var(--muted); font-size: 11px; }\n.overview-stats dd { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n.overview-next { min-height: 70px; }\n.next-job {\n  display: grid;\n  grid-template-columns: minmax(0,1fr) auto auto;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-height: 33px;\n  border: 0;\n  background: transparent;\n  border-radius: 0;\n  padding: 5px 3px;\n  color: var(--fg);\n}\n.next-job + .next-job { border-top: 1px solid var(--line); }\n.next-job :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.next-job .eta { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }\n.next-job svg { color: var(--accent); }\n.guard-summary {\n  width: 100%;\n  display: grid;\n  grid-template-columns: auto minmax(0,1fr) auto;\n  align-items: center;\n  gap: 7px;\n  background: var(--warm-bg);\n  color: var(--warm);\n  border-color: transparent;\n}\n.guard-summary:hover:not(:disabled) { background: var(--warm-bg); filter: brightness(.94); }\n.guard-summary small { color: inherit; white-space: nowrap; }\n.group-shortcuts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }\n.group-shortcuts button { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 5px; align-items: center; min-height: 34px; padding: 4px 7px; background: var(--surface); }\n.group-shortcuts button.enabled svg { color: var(--accent); }\n.group-shortcuts button:hover:not(:disabled) { background: var(--accent-bg); }\n.group-shortcuts small { font-variant-numeric: tabular-nums; white-space: nowrap; }\n.queue-card + .queue-card { margin-top: 10px; }\n.queue-card h3 { margin-bottom: 5px; }\n\n.plan-layout { margin-top: 11px; }\n.lump-advice { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding-inline: 9px; }\n.lump-advice .row { border-bottom: 0; }\n.lump-advice .row > svg { color: var(--accent); }\n.route-next { margin-block: 8px; padding: 8px; background: var(--soft); border-radius: 6px; font-size: 12px; }\n.route-next p { color: var(--muted); margin-top: 2px; }\n.management-layout { display: grid; grid-template-columns: minmax(115px,.65fr) minmax(0,1.65fr); align-items: start; gap: 10px; }\n.management-list { display: grid; gap: 3px; }\n.manage-choice { display: flex; justify-content: space-between; align-items: center; gap: 5px; min-height: 26px; padding-block: 3px; }\n.manage-choice[aria-pressed=true] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }\n.managed-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--accent); }\n.management-detail > .field { margin-top: 8px; }\n.pantheon-advice { display: grid; gap: 6px; margin-top: 6px; }\n.pantheon-advice h4 { margin: 0; font-size: 13px; }\n.pantheon-advice .note { margin-top: 0; }\n.spirit-list { margin: 0; padding: 0; list-style: none; }\n.spirit-list li { padding-block: 5px; border-block-start: 1px solid var(--line); font-size: 12px; }\n.spirit-list small { display: block; }\n.lump-routes { margin-top: 8px; }\n.lump-routes button.selected { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }\n.target-cost { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; margin: 10px 0 7px; font-size: 12px; font-variant-numeric: tabular-nums; }\n.target-cost span { color: var(--muted); }\n.settings-layout { margin-top: 10px; }\n.settings-actions, .update-links { margin-top: 8px; }\n.update-card .field { max-width: 220px; }\n.candidates { margin-top: 6px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }\n.candidate {\n  width: 100%;\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 5px;\n  border: 0;\n  border-top: 1px solid var(--line);\n  background: transparent;\n  border-radius: 0;\n}\n.candidate :is(strong,small) { display: block; overflow-wrap: anywhere; }\n.candidate[aria-pressed=true] { background: var(--accent-bg); box-shadow: inset 2px 0 var(--accent); }\n.rule-card > .field { margin-top: 6px; }\n.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }\n.block { margin-top: 16px; }\n.block-head { margin-bottom: 7px; }\n.block-head > span { font-size: 11px; color: var(--muted); }\n.row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }\n.row > svg { width: 15px; height: 15px; color: var(--muted); flex: 0 0 15px; }\n.row-info { flex: 1 1 auto; min-width: 0; }\n.row strong { font-size: 13px; }\n.row p, .note { margin-top: 3px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }\n.note { margin-top: 8px; }\n.summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }\n.summary .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }\n.summary label { color: var(--muted); font-size: 11px; }\n.cols, .fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }\n.fields { margin: 7px 0; }\n.field { display: grid; align-content: start; gap: 3px; min-width: 0; }\n.field > span { color: var(--muted); font-size: 11px; }\ninput[type=text], input[type=number], input[type=url], select, textarea {\n  min-width: 0;\n  width: 100%;\n  color: var(--fg);\n  background: var(--bg);\n  border: 1px solid var(--line);\n  border-radius: 6px;\n  padding: 5px 7px;\n  font-size: 12px;\n}\nselect option { background: var(--surface); color: var(--fg); }\n.check { display: flex; align-items: center; gap: 7px; min-height: 29px; font-size: 12px; cursor: pointer; }\n.check input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }\n.warning { font-size: 12px; color: var(--warm); background: var(--warm-bg); border-radius: 6px; padding: 8px; margin: 8px 0; }\n.empty { color: var(--muted); font-size: 12px; padding: 10px 0; }\n.empty svg { width: 22px; height: 22px; margin-bottom: 5px; color: var(--accent); }\n.table-wrap { overflow-x: auto; }\n.table { width: 100%; border-collapse: collapse; font-size: 12px; }\n.table th, .table td { padding: 7px 5px; border-bottom: 1px solid var(--line); vertical-align: middle; }\n.table th { color: var(--muted); font-weight: 400; text-align: start; white-space: nowrap; }\n.table td.num { text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }\n.table td small { display: block; }\n.chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0; }\n.chip { font-size: 11px; padding: 3px 6px; background: var(--soft); border-radius: 5px; }\n.garden { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 4px; max-width: 336px; margin-bottom: 7px; }\n.tile { aspect-ratio: 1; min-width: 0; min-height: 29px; padding: 0; position: relative; display: grid; place-content: center; justify-items: center; }\n.tile .symbol { font-size: 17px; line-height: 1.15; color: var(--accent); }\n.tile .plant-label { font-size: 9px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }\n.tile.mature { background: var(--accent-bg); }\n.tile.selected { border-color: var(--accent); }\n.tile.protected::after { content: \"·\"; position: absolute; color: var(--warm); font-size: 22px; line-height: 1; top: 0; right: 3px; }\n.tile-info { min-height: 38px; margin-bottom: 5px; }\n.log { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }\n.log time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }\n.advanced { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 7px; }\n.advanced summary { cursor: pointer; font-size: 13px; font-weight: 600; }\n.forecast, .collection { display: flex; gap: 5px; flex-wrap: wrap; margin: 7px 0; }\n.forecast > div, .collection span { padding: 4px 6px; border-radius: 5px; background: var(--soft); font-size: 11px; }\n.forecast span, .forecast small { display: block; }\n.forecast .good, .collection .owned { color: var(--accent); }\n.forecast .bad { color: var(--bad); }\n.numeric-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px 7px; }\n.toast {\n  position: fixed;\n  bottom: 18px;\n  left: 50%;\n  transform: translateX(-50%);\n  max-width: min(580px,calc(100vw - 22px));\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  box-shadow: 0 8px 24px #0005;\n  padding: 8px 12px;\n  pointer-events: auto;\n}\n.confirm {\n  background: var(--surface);\n  color: var(--fg);\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  max-width: min(430px,calc(100vw - 24px));\n  padding: 16px;\n  pointer-events: auto;\n}\n.confirm::backdrop { background: #0b1712ac; }\n.confirm { inline-size: 370px; max-block-size: calc(100dvh - 24px); overflow-y: auto; }\n#confirm-text { margin: 9px 0 13px; }\n.confirm p { margin-top: 7px; white-space: pre-line; color: var(--muted); }\n.confirm .actions { justify-content: flex-end; }\n.entry {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n  min-height: 25px;\n  color: var(--accent);\n  background: var(--surface);\n  border-color: var(--line);\n  padding: 3px 7px;\n  font-size: 12px;\n  font-weight: 650;\n}\n.entry svg { width: 13px; height: 13px; flex-basis: 13px; }\n:host([data-density=compact]) .row { padding-block: 5px; }\n:host([data-density=compact]) .main { padding-block: 10px; }\n@media (max-width: 560px) {\n  .cols { grid-template-columns: minmax(0,1fr); }\n  .category-tabs button { padding-inline: 4px; }\n}\n@media (max-width: 500px) {\n  :host { --pad: 10px; --workbench-margin: 7px; }\n  .rule-layout { grid-template-columns: minmax(0,1fr); }\n  .management-layout { grid-template-columns: minmax(0,1fr); }\n  .management-list { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; }\n  .manage-choice { min-width: 0; min-height: 28px; padding-inline: 6px; }\n  .head small { display: none; }\n  .nav { padding-inline: 2px; flex-direction: column; gap: 2px; font-size: 11px; }\n  .group-shortcuts { grid-template-columns: repeat(2,minmax(0,1fr)); }\n  .field :is(input,select) { font-size: 16px; }\n}\n@media (max-width: 360px) {\n  .fields { grid-template-columns: minmax(0,1fr); }\n  .head { gap: 4px; }\n}\n@media (pointer: coarse) {\n  :is(.head-action,.nav,.category-tabs button,.rule-tabs button,.check,.next-job,.group-shortcuts button,.guard-summary) {\n    min-height: 44px;\n  }\n}\n";
 (() => {
 'use strict';
-const C=window.CookiePilotCore2,E=window.CookiePilotEngine2;if(!C||!E||window.top!==window)return;
+const C=window.CookiePilotCore2,E=window.CookiePilotEngine2,M=window.CookiePilotManagement;
+if(!C||!E||!M||window.top!==window)return;
 const demo=document.documentElement.dataset.cookiePilotDemo==='true';
 if(!demo&&(location.hostname!=='orteil.dashnet.org'||!/^\/cookieclicker\/(?:index\.html)?$/.test(location.pathname)))return;
 if(window.CookiePilot2){window.CookiePilot2.show();return;}window.CookiePilot?.destroy?.();
@@ -836,7 +1361,7 @@ const esc=C.escape,F=C.fmt,T=C.time;
 const icons={cookie:'M20 12a5 5 0 0 1-6-6 4 4 0 0 1-5-4A10 10 0 1 0 22 15a4 4 0 0 1-2-3ZM7 9h.01M10 16h.01M16 17h.01M6 14h.01',home:'m3 10 9-7 9 7v10H3ZM9 20v-7h6v7',rules:'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6',buy:'M3 3h2l3 12h11l2-8H6M9 20h.01M18 20h.01',leaf:'M19 3C8 2 2 8 5 15s15 3 14-12ZM5 20 16 9',magic:'m4 20 13-13 3 3L7 23ZM4 3v4M2 5h4M17 1v4M15 3h4M21 15v4M19 17h4',market:'M3 3v18h18M7 15l4-5 4 3 6-8',growth:'M12 21V8M7 13l5-5 5 5M5 5h14',save:'M4 3h13l3 3v15H4ZM7 3v6h9V3M8 21v-7h8v7',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2',pause:'M8 5v14M16 5v14',play:'m7 4 14 8-14 8Z',close:'m6 6 12 12M6 18 18 6',spark:'m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z',clock:'M12 8v5l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',shield:'m12 2 8 4v7c0 5-8 9-8 9s-8-4-8-9V6ZM8 12l3 3 5-6',chevron:'m9 5 7 7-7 7',refresh:'M20 7a9 9 0 1 0 1 8M20 2v6h-6',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',flask:'M9 2h6M10 2v7l-6 10v3h16v-3L14 9V2M7 15h10',bell:'M6 17V9a6 6 0 0 1 12 0v8l2 2H4ZM10 22h4'};
 const I=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.spark}"/></svg>`;
 const host=document.createElement('div');host.id='cookie-pilot-v2';host.style.cssText='position:fixed;inset:0;z-index:1000000000;pointer-events:none;';const root=host.attachShadow({mode:'open'});(document.body||document.documentElement).append(host);
-const engine=new E.Engine(()=>window.Game,localStorage,{hidden:()=>document.hidden,change:()=>{theme();render();},log:()=>{}});
+const engine=new E.Engine(()=>window.Game,localStorage,{hidden:()=>document.hidden,change:()=>{theme();render();},notice:toast});
 let page='overview',search='',selectedTile='2,2',destroyed=false,timer,leaseRelease,leasePending=false,leaseEpoch=0,toastTimer,update=null,updateText='尚未检查',checking=false,lab=false,pending=null,liveAt=0,ruleAt=0,checkingAt=0;
 let leaseInOtherTab=false;
 const urls=new Set(),seen=new WeakSet();let audio=null;
@@ -845,6 +1370,32 @@ const pages=[
  ['history','记录','clock'],['settings','设置','settings'],['storage','存档','save']
 ];
 const planTabs=[['purchase','采购与收益'],['combo','爆发组合'],['lumps','糖块与解锁'],['prestige','转生目标']];
+const managementModules={
+ garden:{title:'花园',link:'harvest',modes:[['seeds','培育新种子']],
+  scope:'从当前种子和地块选择亲本、留空突变格、收获新的成熟种子。保护格与已有作物保留。'},
+ magic:{title:'魔法书',link:'cast',modes:[['yield','收益与爆发']],
+  scope:"平时预测并召唤饼干，增益期间优先用命运之手叠加效果并拾取召唤的金饼干。不合适的序列可用 Haggler’s Charm 推进，反噬时升级价格暂涨 2%。"},
+ pantheon:{title:'万神殿',link:'pantheon',modes:[['lineup','补齐并维持阵容']],
+  scope:'保留已在槽的神灵，按当前挂机方式推荐空槽。第一次配置后维持这套阵容，遵守调换次数预留。'},
+ market:{title:'股市',link:'trade',modes:[['portfolio','分位交易']],
+  scope:'积累报价后按分位买卖。多笔订单共用仓位预算，优先退出达到净利目标的已知成本仓位。'},
+ dragon:{title:'养龙',link:'dragon',modes:[['hatch','孵化与抚摸'],['develop','训练与主光环']],
+  scope:'按预算购买龙蛋并训练。龙达到 8 级并解锁抚摸后，尝试集齐龙掉落。'},
+ season:{title:'季节收藏',link:'season',modes:[['collection','轮换并收集季节物品']],
+  scope:'圣诞收驯鹿并培养圣诞老人。复活节和万圣节收集随机掉落。情人节按预算逐件购买饼干。独立启用皱纹虫托管时优先按它的方案收取。'},
+ wrinklers:{title:'皱纹虫',link:'wrinkler',modes:[['yield','攒收益'],['drops','刷掉落']],
+  scope:'按用途等待储量和数量，再回收普通皱纹虫。始终保留闪光个体。'},
+ events:{title:'点击与事件',link:'click',modes:[['idle','日常挂机'],['burst','爆发连点']],
+  scope:'收取金饼干、驯鹿和幸运新闻。按设定速度连点，并遵守面纱和挑战保护。'},
+ purchase:{title:'采购',link:'purchase',modes:[['efficient','按回本采购']],
+  scope:'根据实际库存和收益比较建筑与升级，遵守保留线、黑名单和数量上限。'},
+ lumps:{title:'糖块',link:'lumpManaged',scope:'成熟收取，按授权路线解锁小游戏和提升建筑等级。'},
+ ascension:{title:'转生提醒',modes:[['notice','声望达标提醒']],
+  scope:'监测新增声望，达到目标时提醒。可从这里查看转生规划并打开游戏确认。'}
+};
+const defaultManagement={events:'idle',purchase:'efficient',garden:'seeds',magic:'yield',pantheon:'lineup',market:'portfolio',dragon:'hatch',wrinklers:'yield'};
+const managementDraft=new Map();
+let managementTab='garden';
 const viewStates=new Map();
 let shownView='',renderedControls='';
 root.innerHTML=`<style>${window.CookiePilotStyles2||''}</style>
@@ -1057,7 +1608,7 @@ function currentRule(group,g){
 }
 
 function activePage(){
- if(page==='queue')return'overview';
+ if(['queue','management'].includes(page))return'overview';
  if(['garden','magic','market','growth'].includes(page))return'automation';
  if(page==='purchase')return'planning';
  return page;
@@ -1113,6 +1664,10 @@ function ruleReport(g,c,key){
  const gate=automationGate(g,c);
  if(gate)return{label:'已暂停',text:gate,tone:'warn'};
  const state=engine.states[key]||'';
+ if(M.modes(g,c).garden&&['harvest','plant'].includes(key)){
+  const reason=engine.states.plant;
+  return{label:'托管中',text:reason&&reason!=='已关闭'?reason:'等待花园托管检查',tone:'good'};
+ }
  if(key==='harvest'||key==='plant'){
   const info=C.garden(g);
   if(info.m.freeze)return{label:'已冻结',text:'等待花园解除冻结',tone:'warn'};
@@ -1145,7 +1700,7 @@ function ruleReport(g,c,key){
   return{label:'待收取',text:'已到安全收取时间',tone:'good'};
  }
  if(key==='cast'){
-  const cast=C.castPlan(g,c,engine.lastCast);
+  const cast=M.modes(g,c).magic?M.spellPlan(g,c,engine.lastCast):C.castPlan(g,c,engine.lastCast);
   if(!cast.reason)return{label:'待施法',text:cast.spell.name+' · 消耗 '+F(cast.cost)+' 魔力',tone:'good'};
   const timed=Number.isFinite(cast.seconds);
   return{label:timed?(cast.reason==='等待魔力'?'等魔力':'冷却中'):'等待条件',
@@ -1371,16 +1926,19 @@ function unknownLots(market){
 function rulesView(g,c){
  const group=groups.find(item=>item.id===groupId);
  const key=currentRule(group,g);
- const report=ruleReport(g,c,key);
+ const run=M.execution(g,c),managed=M.owner(g,c,key);
+ const report=ruleReport(g,run,key);
  const locked=ruleLock(g,key);
  const action=group.analysis?btn(group.link,'navigate',group.analysis,'ghost'): '';
- return `<div class="rule-heading"><h2>${group.name}</h2>${action}</div>
+ const category=M.moduleForRule(key);
+ return `<div class="rule-heading"><h2>${group.name}</h2><div class="actions">${action}${category?btn('玩法托管','manage-module',category,'ghost'):''}</div></div>
   <div class="rule-layout">
    <section class="rule-card" aria-label="规则详情">
     <div class="card-title"><h3>${shortRules[key]}</h3>${tag(report.label,report.tone)}</div>
     ${key==='pantheon'&&!locked?c.pantheon?`<p class="rule-reason">${esc(report.text)}</p>`:'':
       `<p class="rule-reason" data-current-rule="${key}">${esc(report.text)}</p><p class="rule-copy">${esc(descriptions[key])}</p>`}
-    ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):ruleConfig[key](g,c)}
+    ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):
+      managed?note(esc(managementModules[managed].title)+'托管正在接管此规则。')+btn('设置托管','manage-module',managed,'ghost'):ruleConfig[key](g,c)}
    </section>
    <section class="rule-card" aria-label="玩法状态"><h3>游戏状态</h3>
     ${facts(contextRows(g,c,group,key))}
@@ -1394,18 +1952,23 @@ function nextJobs(g,c){
  const add=(key,title,seconds,detail)=>{
   if(Number.isFinite(seconds))jobs.push({key,title,seconds:Math.max(0,seconds),detail});
  };
- if(c.harvest){
+ const managed=M.modes(g,c);
+ if(managed.garden){
+  const plan=M.gardenPlan(g,c);
+  if(plan.kind)add('plant',plan.reason,plan.seconds,'花园托管');
+ }
+ if(c.harvest&&!managed.garden){
   const info=C.garden(g);
   const tile=C.harvestTargets(g,c,info)[0];
   if(tile)add('harvest','收获 '+C.tileName(tile)+' 的'+tile.p.name,tile.mature?0:Math.max(info.next,tile.eta),'按花园生长速度估算');
  }
- if(c.plant){
+ if(c.plant&&!managed.garden){
   const tile=C.plantingPlan(g,c).tiles[0];
   if(tile)add('plant','在 '+C.tileName(tile)+' 补种'+tile.plant.name,0,'预计花费 '+F(tile.cost)+' 饼干');
  }
  if(c.cast){
-  const cast=C.castPlan(g,c,engine.lastCast);
-  if(cast.spell)add('cast','施放'+cast.spell.name,cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
+  const cast=managed.magic?M.spellPlan(g,c,engine.lastCast):C.castPlan(g,c,engine.lastCast);
+  if(cast.spell)add('cast','施放'+C.plain(cast.spell.name),cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
  }
  if(c.pantheon){
   const plan=C.pantheonPlan(g,c.gods,c.swapReserve);
@@ -1424,10 +1987,22 @@ function nextJobs(g,c){
    '保留 '+lumpCount(plan.reserve)+' · 目标 '+plan.target+' 级');
  }
  if(c.purchase&&!engine.rebuy.length){
-  const plan=C.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget});
+  const plan=M.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget});
   const item=plan.next||plan.target;
-  if(item)add('purchase','买入 '+item.name,plan.seconds,plan.bridge?'过渡购买可缩短目标等待时间':
+  if(item)add('purchase','买入 '+item.name,plan.seconds,plan.unlock?'准备解锁'+plan.unlock:plan.bridge?'过渡购买可缩短目标等待时间':
    item.shortfall>0?'还差 '+F(item.shortfall)+' 饼干 · 按当前被动产速估算':'买后预计保留 '+F(item.keep));
+ }
+ if(managed.market){
+  const order=M.marketOrder(g,c,engine.hist,engine.ledger).orders?.[0];
+  if(order)add('trade',(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units,0,'股市托管');
+ }
+ if(managed.dragon){
+  const plan=M.dragonPlan(g,c,managed.dragon);
+  if(plan.kind)add('dragon',plan.reason,0,'养龙托管');
+ }
+ if(managed.season){
+  const plan=M.seasonPlan(g,c);
+  if(plan.kind)add('season',plan.reason,0,'季节托管 · 花费 '+F(plan.cost)+' 饼干');
  }
  return jobs.sort((a,b)=>a.seconds-b.seconds);
 }
@@ -1454,7 +2029,8 @@ function jobRows(jobs,compact){
   </button>`).join('');
 }
 function runtimeState(g,c){
- const gate=automationGate(g,c),count=C.AUTO.filter(key=>c[key]).length;
+ const gate=automationGate(g,c),run=M.execution(g,c);
+ const count=C.AUTO.filter(key=>run[key]).length+Number(!!M.modes(g,c).ascension);
  if(engine.paused)return{label:'已暂停',tone:'warn',message:engine.startupHold?gate:'所有挂机规则已暂停'};
  if(gate)return{label:'等待中',tone:'warn',message:gate};
  if(!count)return{label:'未启用',tone:'',message:'尚未启用挂机规则'};
@@ -1495,14 +2071,124 @@ function nextSetup(g,c){
  }
  return'';
 }
+function managementNext(g,c,id,choice){
+ const run=M.execution(g,c);
+ switch(id){
+  case 'garden':return M.gardenPlan(g,run).reason;
+  case 'magic':{
+   const plan=M.spellPlan(g,run,engine.lastCast);
+   return plan.reason||'可施放 '+C.plain(plan.spell.name)+' · '+plan.detail;
+  }
+  case 'pantheon':{
+   const gods=c.managed.gods||M.pantheonLineup(g,run);
+   if(!gods)return'等待万神殿解锁';
+   const plan=C.pantheonPlan(g,gods,run.swapReserve);
+   return plan.reason+(plan.status==='waiting'&&Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):'');
+  }
+  case 'market':{
+   const plan=M.marketOrder(g,run,engine.hist,engine.ledger),order=plan.orders?.[0];
+   return order?(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units:plan.reason;
+  }
+  case 'dragon':{
+   const plan=M.dragonPlan(g,run,choice);
+   if(plan.kind)return plan.reason;
+   const aura=choice==='develop'&&M.growthAura(g,run);
+   if(aura)return '配置 '+(aura.aura.dname||aura.aura.name)+' · 牺牲 1 座 '+(aura.highest.dname||aura.highest.name);
+   const missing=M.dragonDrops(g);
+   if(g.dragonLevel>=8&&C.has(g,'Pet the dragon')){
+    if(missing.length)return '抚摸龙 · 还缺 '+missing.length+' 件掉落';
+    return '龙掉落已收齐 · '+plan.reason;
+   }
+   return plan.reason;
+  }
+  case 'season':return M.seasonPlan(g,run).reason;
+  case 'wrinklers':{
+   const plan=M.wrinklerPlan(g,run,choice);
+   return plan.target?'可收取普通皱纹虫 · 估算 '+F(plan.value)+' 饼干':plan.reason;
+  }
+  case 'events':return C.veil(g,run)?'闪烁面纱保护中':choice==='burst'&&!C.clickBuff(g)?'等待点击增益与自然事件':
+   '连点目标 '+run.rate+' 次/秒';
+  case 'purchase':{
+   const plan=M.purchasePlan(g,{...run,purchaseMode:'efficient',target:''});
+   return plan.next?'可购买 '+plan.next.name+' · '+F(plan.next.price)+' 饼干':plan.reason;
+  }
+  case 'ascension':return c.ascendTarget>0?'预计新增 '+F(C.prestige(g),0)+' / '+F(c.ascendTarget,0)+' 声望':'先在转生规划中设定声望目标';
+  default:return C.lumpRoutePlan(g,run).reason;
+ }
+}
+function managedScope(id,choice,c){
+ const module=managementModules[id];
+ if(id==='dragon')return module.scope+(choice==='develop'?
+  '训练至设定的 '+c.dragonMax+' 级，可能牺牲建筑。达标后可为尚未设置的主光环消耗一座最高阶建筑。':'训练最多至 5 级，先孵化并培养龙。');
+ if(id==='season')return module.scope+' 每轮转生最多 '+c.managed.seasonLimit+' 次季节切换。';
+ return module.scope;
+}
+function managementFields(id,c){
+ let options='';
+ if(id==='garden')options=field('gardenSpend','种植预算（可用饼干 %）','number',{min:0,max:100});
+ if(id==='magic')options=field('magicReserve','保留魔力','number',{min:0})+
+  field('castCooldown','施法冷却（秒）','number',{min:1,step:1});
+ if(id==='pantheon')options=field('swapReserve','保留调换次数','number',{min:0,max:3,step:1});
+ if(id==='market')options=field('marketBudget','总仓位预算（可用饼干 %）','number',{min:0,max:100})+
+  field('marketMinSamples','最低报价样本数','number',{min:5,max:2000,step:1})+
+  field('marketProfit','最低净利 %','number',{min:0})+
+  field('marketCap','单项仓位上限','number',{min:1,max:10000,step:1})+
+  field('marketBuy','买入分位 ≤ %','number',{min:0,max:49})+
+  field('marketSell','卖出分位 ≥ %','number',{min:51,max:100});
+ if(id==='dragon')options=field('dragonMax','训练等级上限','number',{min:0,max:27,step:1});
+ if(id==='events')options=field('rate','连点目标次数 / 秒','number',{min:1,max:40,step:1});
+ if(id==='purchase')options=select('reserveMode','饼干保留',reserveModes)+
+  (c.reserveMode==='custom'?field('reserve','保留饼干数','number',{min:0}):'')+
+  field('bulk','每次购买数量','number',{min:1,max:100,step:1})+
+  field('maxBuilding','单类建筑数量上限','number',{min:1,step:1});
+ return options?`<details class="advanced" data-state="manage-settings"><summary>设置预算与条件</summary><div class="fields">${options}</div></details>`:'';
+}
+function managementPage(g,c){
+ const active=M.modes(g,c),module=managementModules[managementTab];
+ const mode=active[managementTab];
+ const choice=managementDraft.get(managementTab)||mode||module.modes?.[0]?.[0];
+ const preview=choice?{...c,managed:{...c.managed,saveId:g.fullDate,modes:{...active,[managementTab]:choice}}}:c;
+ const actions=managementTab==='lumps'?btn('打开糖块托管','sugar-plan','managed','primary'):
+  btn(mode&&mode!==choice?'应用新方案':mode?'已开启托管':'开启托管','start-management',managementTab,'primary',
+   !C.compatible(g)||!g.fullDate||mode===choice)+
+  (mode?btn('停止托管','stop-management',managementTab,'ghost'):'');
+ const summary=managementNext(g,preview,managementTab,choice);
+ return `<div class="rule-heading">
+  <h2>玩法托管</h2>
+  <div class="actions">${btn('启用常用组合','management-common','','ghost',!C.compatible(g)||!g.fullDate)}${btn('执行队列','navigate','queue','ghost')}</div>
+ </div>
+ ${M.configured(c)&&c.managed.saveId!==g.fullDate?note('存档已切换。请在当前存档重新确认托管。'):''}
+ <div class="management-layout">
+  <div class="management-list" role="group" aria-label="选择托管玩法">${Object.entries(managementModules).map(([id,item])=>{
+   const running=id==='lumps'?C.managesLumps(g,c):active[id];
+   return `<button type="button" class="manage-choice" aria-pressed="${id===managementTab}" data-action="manage-module" data-arg="${id}">
+    <span>${item.title}</span>${running?'<span class="managed-dot" aria-label="已托管"></span>':''}</button>`;
+  }).join('')}</div>
+  <section class="rule-card management-detail" aria-label="托管方案">
+   <div class="card-title"><h3>${module.title}</h3>${mode||managementTab==='lumps'&&C.managesLumps(g,c)?tag(engine.paused?'已暂停':'已托管','good'):''}</div>
+   ${module.modes?.length>1?select('management-profile','托管目标',module.modes,choice):''}
+   <div class="route-next"><strong>下一步</strong><p>${esc(mode&&automationGate(g,c)||summary||'等待规则条件满足')}</p></div>
+   <div class="actions">${actions}
+    ${managementTab==='garden'?btn('查看地块','navigate','garden','ghost'):
+     module.link?btn('查看规则','open-rule',module.link,'ghost'):btn('调整声望目标','plan-tab','prestige','ghost')}
+   </div>
+   ${note(esc(managedScope(managementTab,choice,c)))}
+   ${managementTab==='season'?select('managed-season-limit','本轮季节切换上限',Array.from({length:12},(_,i)=>[i+1,(i+1)+' 次']),c.managed.seasonLimit):''}
+   ${managementFields(managementTab,c)}
+  </section>
+ </div>`;
+}
 function compactOverview(g,c){
- const status=runtimeState(g,c);
- const jobs=nextJobs(g,c);
- const [first,...rest]=protections(g,c);
- const enabled=C.AUTO.some(key=>c[key]);
- const suggestion=nextSetup(g,c);
+ const run=M.execution(g,c),status=runtimeState(g,c);
+ const jobs=nextJobs(g,run);
+ const [first,...rest]=protections(g,run);
+ const enabled=M.active(g,c);
+ const suggestion=nextSetup(g,run);
  return `<div class="overview">
-  <div class="overview-heading"><h2>挂机总览</h2>${enabled?btn('查看队列','navigate','queue','ghost'):btn('配置日常挂机','preset','idle','primary')}</div>
+  <div class="overview-heading"><h2>挂机总览</h2><div class="actions">
+   ${btn('玩法托管','navigate','management','primary')}
+   ${enabled?btn('查看队列','navigate','queue','ghost'):''}
+  </div></div>
   ${activity()}
   <section class="rule-card overview-next" aria-label="下一步执行">
    <div class="card-title"><h3>下一步</h3>${enabled?'':btn('查看队列','navigate','queue','ghost')}</div>
@@ -1513,13 +2199,14 @@ function compactOverview(g,c){
    ${rest.length?`<small>另 ${rest.length} 项</small>`:I('chevron')}</button>`:''}
   ${suggestion?`<section class="lump-advice" aria-label="建议下一步">${suggestion}</section>`:''}
   <div class="group-shortcuts" role="group" aria-label="玩法入口">${groups.map(group=>{
-   const count=group.rules.filter(key=>c[key]).length;
+   const count=group.rules.filter(key=>run[key]).length;
    return btn(I(group.icon)+`<span>${esc(group.short||group.name)}</span><small>${count}/${group.rules.length}</small>`,'rule-group',group.id,count?'enabled':'');
   }).join('')}</div>
  </div>`;
 }
 function queuePage(g,c){
- const jobs=nextJobs(g,c),held=protections(g,c);
+ const run=M.execution(g,c);
+ const jobs=nextJobs(g,run),held=protections(g,run);
  const gate=automationGate(g,c);
  return `<div class="rule-heading"><h2>执行队列</h2>${btn('返回总览','navigate','overview','ghost')}</div>
   <section class="rule-card queue-card" aria-label="预计执行">
@@ -1747,7 +2434,7 @@ function comboPlanning(g,c){
   (C.mini(g,'Wizard tower')?btn('查看法术预测','navigate','magic','ghost'):note('将巫师塔升至 1 级可查看施法条件。'));
 }
 
-const renderers={overview:compactOverview,queue:queuePage,planning:planningPage,history:logsPage,
+const renderers={overview:compactOverview,queue:queuePage,management:managementPage,planning:planningPage,history:logsPage,
  automation:rulesView,garden:gardenPage,magic:magicPage,market:marketPage,growth:growthPage,storage:storagePage,settings:settingsPage};
 function actionSelector(action,arg){
  return '[data-action="'+CSS.escape(action)+'"][data-arg="'+CSS.escape(arg||'')+'"]';
@@ -1791,7 +2478,8 @@ function render(){
  if(destroyed)return;
  rememberPosition();
  const view=page==='automation'?[page,groupId,currentRule(groups.find(g=>g.id===groupId),engine.g)].join('/'):
-  page==='planning'?[page,planTab,planTab==='lumps'?lumpView:''].join('/'):page;
+  page==='planning'?[page,planTab,planTab==='lumps'?lumpView:''].join('/'):
+  page==='management'?page+'/'+managementTab:page;
  const sameView=shownView===view;
  const focus=sameView?focusSelector(root.activeElement):'';
  const position=viewStates.get(view);
@@ -1844,7 +2532,7 @@ function releaseLease(){
  engine.lastPulse=0;
 }
 function wantsLease(){
- return !destroyed&&C.AUTO.some(k=>engine.c[k])&&!C.gate(engine.g,engine.c,{paused:engine.paused,hidden:document.hidden});
+ return !destroyed&&M.active(engine.g,engine.c)&&!C.gate(engine.g,engine.c,{paused:engine.paused,hidden:document.hidden});
 }
 async function lease(){
  if(!wantsLease()){
@@ -1886,7 +2574,8 @@ function loop(){if(destroyed)return;const now=performance.now();engine.click(now
   }
  }
  if(!demo&&engine.c.updateCheck&&C.ready(engine.g)&&Date.now()-checkingAt>86400000){checkingAt=Date.now();void checkUpdate();}
- const activelyClicking=engine.c.click&&!['noClick','both'].includes(engine.c.challenge)&&engine.locked&&!C.gate(engine.g,engine.c,engine.env())&&!C.veil(engine.g,engine.c)&&(engine.c.clickMode!=='buff'||C.clickBuff(engine.g));
+ const run=M.execution(engine.g,engine.c);
+ const activelyClicking=run.click&&!['noClick','both'].includes(run.challenge)&&engine.locked&&!C.gate(engine.g,run,engine.env())&&!C.veil(engine.g,run)&&(run.clickMode!=='buff'||C.clickBuff(engine.g));
  const delay=activelyClicking?Math.max(5,Math.min(100,(engine.next.click||0)-performance.now())):100;timer=setTimeout(loop,delay);
 }
 function preset(name){
@@ -1901,14 +2590,58 @@ function preset(name){
  const disabled=C.AUTO.filter(key=>engine.c[key]&&!value[key]).map(key=>shortRules[key]);
  ask('应用'+label,{
   rows:[['开启规则',on.join('、')||'无'],['关闭规则',disabled.join('、')||'无'],
+   ...(name==='observe'&&M.configured(engine.c)?[['玩法托管','全部停止']]:[]),
    ...(value.purchase?[['饼干保留',reserveModes.find(([key])=>key===engine.c.reserveMode)[1]]]:[])],
   message:engine.paused?'当前已暂停，点击「继续」后执行。':'',
   button:'应用方案'
  },()=>{
-   engine.set({...off,...value});
+   engine.set({...off,...value,...(name==='observe'?{managed:{...engine.c.managed,modes:{},gods:null}}:{})});
    void lease();
    toast('已应用'+label);
   });
+}
+function confirmManagement(id){
+ const g=engine.g;
+ if(!C.compatible(g)||!Number.isSafeInteger(g.fullDate)||g.fullDate<=0)return;
+ const saveId=g.fullDate;
+ engine.syncSharedSettings();
+ const current=engine.c,catalog=managementModules[id],active=M.modes(g,current);
+ const chosen=id==='common'?Object.fromEntries(Object.entries(defaultManagement).filter(([key])=>!active[key])):
+  {[id]:managementDraft.get(id)||active[id]||catalog.modes[0][0]};
+ if(!Object.keys(chosen).length){toast('常用玩法已全部加入托管');return;}
+ const next={...current,managed:{...current.managed,saveId,modes:{...active,...chosen}}};
+ const mode=chosen[id];
+ const title=id==='common'?'开启常用托管组合':'开启'+catalog.title+'托管';
+ const rows=id==='common'?[
+  ['托管玩法',Object.keys(chosen).map(key=>managementModules[key].title).join('、')],
+  ['饼干保留',reserveModes.find(([key])=>key===current.reserveMode)[1]],
+  ['股市仓位上限',F(current.marketBudget,0)+'%'],
+  ['养龙范围','孵化，训练最多至 5 级']
+ ]:[['托管目标',catalog.modes.find(([key])=>key===mode)[1]],['预计下一步',managementNext(g,next,id,mode)]];
+ const message=id==='common'?'按存档选择亲本、阵容和交易机会。魔法书可用 Haggler’s Charm 推进序列，反噬时升级价格短期上涨 2%。':
+  managedScope(id,mode,current);
+ ask(title,{rows,message:message+(engine.paused?'\n点击「继续」后执行。':''),button:'确认托管'},()=>{
+  if(!C.compatible(engine.g)||engine.g.fullDate!==saveId)throw Error('存档已变化，请重新确认');
+  engine.syncSharedSettings();
+  const previous=engine.c.managed,valid=previous.saveId===saveId;
+  const selections=valid?{...previous.modes}:{};
+  for(const [key,value] of Object.entries(chosen)){
+   if(id!=='common'||!selections[key])selections[key]=value;
+  }
+  engine.set({managed:{...previous,saveId,modes:selections,gods:valid?previous.gods:null}});
+  engine.log(title+' · '+Object.keys(chosen).map(key=>managementModules[key].title).join('、'));
+  void lease();
+ });
+}
+function stopManagement(id){
+ engine.syncSharedSettings();
+ const current=engine.c.managed,modes={...current.modes};
+ if(!M.modes(engine.g,engine.c)[id])return;
+ delete modes[id];
+ engine.set({managed:{...current,modes,gods:id==='pantheon'?null:current.gods}});
+ managementDraft.delete(id);
+ engine.log('已停止'+managementModules[id].title+'托管');
+ void lease();
 }
 const dangerousRules={dragon:'将按目标等级自动训练龙，可能牺牲大量建筑。',aura:'会消耗最高阶建筑来维持你选定的光环方案。',pantheon:'将使用调换次数维持神灵方案。',godzamok:'点击增益时出售选定建筑，然后按预算回购。',season:'将花费饼干切换到你指定的季节。',trade:'将按条件买卖游戏中的股票，实际利润不能保证。',cast:'将按配置自动施法，可能反噬或改变资源。'};
 function toggleProtection(key){
@@ -1941,7 +2674,7 @@ function assignPantheon(){
  });
 }
 function startLumpManaged(mode=engine.c.lumpManagedMode){
- engine.syncLumpSettings();
+ engine.syncSharedSettings();
  const g=engine.g,c=engine.c,saveId=g.fullDate;
  if(!C.compatible(g)||!Number.isSafeInteger(saveId)||saveId<=0){toast('等待受支持的存档加载');return;}
  const {lumpReserveMode,lumpReserve}=c;
@@ -1958,7 +2691,7 @@ function startLumpManaged(mode=engine.c.lumpManagedMode){
    c.lumpLevel?'当前单栋升级任务会暂停。':'',engine.paused?'点击「继续」后执行。':''].filter(Boolean).join('\n'),
   button:'确认托管'
  },()=>{
-  engine.syncLumpSettings();
+  engine.syncSharedSettings();
   const latest=engine.c;
   if(!C.compatible(engine.g)||saveId!==engine.g.fullDate||latest.lumpReserveMode!==lumpReserveMode||latest.lumpReserve!==lumpReserve){
    throw Error('存档或保留策略已变化，请重新确认');
@@ -1970,7 +2703,7 @@ function startLumpManaged(mode=engine.c.lumpManagedMode){
 }
 function assignLumpGoal(draft){
  const g=engine.g;
- engine.syncLumpSettings();
+ engine.syncSharedSettings();
  const goal={buildingId:draft?.buildingId,level:draft?.level,saveId:g.fullDate};
  const plan=C.lumpPlan(g,engine.c,goal);
  if(!C.compatible(g)||!Number.isSafeInteger(goal.saveId)||goal.saveId<=0){
@@ -1991,7 +2724,7 @@ function assignLumpGoal(draft){
    engine.paused?'点击「继续」后检查预算。':progress].filter(Boolean).join('\n'),
   button:'安排升级'
  },()=>{
-   engine.syncLumpSettings();
+   engine.syncSharedSettings();
    const fresh=C.lumpPlan(engine.g,engine.c,goal);
    if(!C.compatible(engine.g)||!fresh.object||fresh.status==='different-save'||fresh.reserve!==plan.reserve||fresh.totalCost>plan.totalCost){
     throw Error('存档、等级或保留量已变化，请重新确认');
@@ -2029,6 +2762,25 @@ root.addEventListener('change',event=>{
    const gods=[...engine.c.gods];gods[Number(key.slice(4))]=Number(value);engine.set({gods});return;
   }
   if(key==='pantheon-profile'){pantheonProfile=value;render();return;}
+  if(key==='management-profile'){managementDraft.set(managementTab,value);render();return;}
+  if(key==='managed-season-limit'){
+   const limit=Number(value);
+   const apply=()=>{
+    engine.syncSharedSettings();
+    engine.set({managed:{...engine.c.managed,seasonLimit:limit}});
+   };
+   if(M.modes(engine.g,engine.c).season){
+    el.value=engine.c.managed.seasonLimit;
+    ask('调整季节切换上限',{rows:[['本轮累计上限',limit+' 次']],button:'保存上限'},apply);
+   }else apply();
+   return;
+  }
+  if(key==='dragonMax'&&M.modes(engine.g,engine.c).dragon==='develop'&&Number(value)>engine.c.dragonMax){
+   const level=C.config({...engine.c,dragonMax:value}).dragonMax;
+   el.value=engine.c.dragonMax;
+   ask('提高龙训练上限',{rows:[['新目标等级',level+' 级']],message:'后续训练可能消耗建筑。',button:'提高上限'},()=>engine.set({dragonMax:level}));
+   return;
+  }
   if(key==='lumpManagedMode'&&engine.c.lumpManaged){
    el.value=engine.c.lumpManagedMode;
    if(value!==el.value)startLumpManaged(value);
@@ -2083,6 +2835,12 @@ root.addEventListener('click',async event=>{
  const action=b.dataset.action,arg=b.dataset.arg,g=engine.g,c=engine.c;
  try{
  if(action==='navigate'){navigate(arg);return;}
+ if(action==='manage-module'&&Object.hasOwn(managementModules,arg)){
+  managementTab=arg;navigate('management',actionSelector(action,arg));return;
+ }
+ if(action==='start-management'){confirmManagement(arg);return;}
+ if(action==='stop-management'){stopManagement(arg);return;}
+ if(action==='management-common'){confirmManagement('common');return;}
  if(action==='rule-group'){
   groupId=arg;
   navigate('automation',actionSelector('rule-group',arg));
@@ -2185,7 +2943,7 @@ root.addEventListener('click',async event=>{
   if(plan.status!=='ready')throw Error(plan.reason);
   ask('提升 '+plan.name+' 等级','消耗 '+lumpCount(plan.nextCost)+'，保留至少 '+lumpCount(plan.reserve)+'。',()=>{
    engine.manualGate();
-   engine.syncLumpSettings();
+   engine.syncSharedSettings();
    const fresh=C.lumpPlan(engine.g,engine.c,goal);
    if(fresh.status!=='ready')throw Error(fresh.reason);
    if(fresh.object!==object||fresh.current!==plan.current)throw Error('建筑等级已变化，请重新确认');
@@ -2225,7 +2983,7 @@ function visibility(){
 function syncStorage(event){
  if(event.key===E.SETTINGS){
   const before=JSON.stringify(engine.c);
-  if(!engine.syncLumpSettings()||before===JSON.stringify(engine.c))return;
+  if(!engine.syncSharedSettings()||before===JSON.stringify(engine.c))return;
   void lease();
   if(engine.c.open&&!$('confirm').open)render();
   return;

@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),test=require('node:test'),assert=require('node:assert/strict');
 const path=require('node:path'); const ref=process.env.COOKIE_PILOT_REFERENCE_DIR; if(!ref){test('official references (optional)',{skip:'Set COOKIE_PILOT_REFERENCE_DIR to the verified official source directory'},()=>{});return;}
-const C=require('../src/core.js'),{Engine}=require('../src/engine.js'),make=require('./fixture.js');
+const C=require('../src/core.js'),M=require('../src/management.js'),{Engine}=require('../src/engine.js'),make=require('./fixture.js');
 const main=fs.readFileSync(path.join(ref,'main.js'),'utf8').replace(/\r\n/g,'\n'),grimoire=fs.readFileSync(path.join(ref,'minigameGrimoire.js'),'utf8').replace(/\r\n/g,'\n'),garden=fs.readFileSync(path.join(ref,'minigameGarden.js'),'utf8').replace(/\r\n/g,'\n'),market=fs.readFileSync(path.join(ref,'minigameMarket.js'),'utf8').replace(/\r\n/g,'\n'),temple=fs.readFileSync(path.join(ref,'minigamePantheon.js'),'utf8').replace(/\r\n/g,'\n');
 const section=(s,a,b)=>{const start=s.indexOf(a),end=s.indexOf(b,start);assert(start>=0&&end>start,a);return s.slice(start,end);};
 const memory=()=>{const map=new Map();return{getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};};
@@ -11,6 +11,37 @@ test('forecast agrees with actual 2.058 spell and shimmer initialization in 1200
 const init=section(main,'initFunc:function(me)','\n\t\t\t\tupdateFunc:function(me)').replace(/^initFunc:/,'').replace(/,\s*$/,'');ctx.init=vm.runInContext('('+init+')',ctx);g.shimmer=function(type,obj){this.type=type;this.forceObj=obj;this.force='';this.l={style:{},setAttribute(){}};g.shimmerTypes.golden.n++;ctx.init(this);ctx.spawned=this;};
 for(const season of['','christmas','easter','halloween','valentines','fools'])for(const flight of[false,true])for(let n=0;n<100;n++){g.season=season;g.buffs=flight?{Dragonflight:{name:'Dragonflight'}}:{};g.shimmerTypes.golden.n=n%3;m.spellsCastTotal=n;g.BuildingsOwned=n%2?100:0;m.getFailChance=()=>.15+.15*g.shimmerTypes.golden.n;const expected=C.forecast(g,1)[0];ctx.seed=g.seed+'/'+n;vm.runInContext('Math.seedrandom(seed); var fail=Math.random()>=1-M.getFailChance(M.spells["hand of fate"]); if(fail)M.spells["hand of fate"].fail();else M.spells["hand of fate"].win();',ctx);assert.equal(ctx.spawned.force,expected.effect,season+' '+flight+' '+n);assert.equal(ctx.fail,expected.fail);}});
 test('garden adapter calls actual harvest and useTool functions with correct costs and seed unlocks',()=>{const g=make(),m=g.Objects.Farm.minigame;g.keys=[];m.harvests=0;m.harvestsTotal=0;m.unlockSeed=p=>{p.unlocked=1;return true;};const ctx=context(g,m);vm.runInContext(section(garden,'M.useTool=function','\n\t\tM.getTile='),ctx);vm.runInContext(section(garden,'M.harvest=function','\n\t\tM.unlockSeed='),ctx);const e=new Engine(()=>g,memory());e.locked=true;e.harvest();assert.equal(m.plants.bakeberry.unlocked,1);assert.equal(m.plot[4][3][0],0);e.set({gardenSpend:10,replantLayout:'fill'});const before=g.cookies;e.plant();assert.equal(before-g.cookies,30000);});
+test('managed garden chooses parents using the official mutation rules on a starter plot',()=>{
+ const g=make(),m=g.Objects.Farm.minigame,ctx=context(g,m);
+ g.keys=[];
+ m.harvests=m.harvestsTotal=0;
+ m.unlockSeed=p=>{p.unlocked=1;return true;};
+ m.plants.thumbcorn.unlocked=0;
+ m.plot.forEach(row=>row.forEach(tile=>{tile[0]=tile[1]=0;}));
+ for(const [start,end] of [
+  ['M.getMuts=function','M.computeBoostPlot=function'],
+  ['M.useTool=function','M.computeStepT=function'],
+  ['M.harvest=function','M.unlockSeed=']
+ ])vm.runInContext(section(garden,start,end),ctx);
+ const e=new Engine(()=>g,memory());
+ e.locked=true;
+ e.set({managed:{saveId:g.fullDate,modes:{garden:'seeds'}},protectedTiles:['2,2']});
+ const run=()=>M.execution(g,e.c);
+ assert.match(M.gardenPlan(g,run()).reason,/拇指玉米/);
+ e.plant(run());
+ e.plant(run());
+ const planted=C.garden(g).cells.filter(tile=>tile.p);
+ assert.equal(planted.length,2);
+ assert(planted.every(tile=>tile.p.key==='bakerWheat'&&tile.key!=='2,2'));
+ for(const tile of planted)m.plot[tile.y][tile.x][1]=m.plants.bakerWheat.mature;
+ const target=C.garden(g).cells.find(tile=>tile.unlocked&&!tile.p&&tile.key!=='2,2');
+ const mutations=C.mutations(g,target.x,target.y);
+ assert(mutations.some(mutation=>mutation.key==='thumbcorn'));
+ m.plot[target.y][target.x]=[m.plants.thumbcorn.id+1,m.plants.thumbcorn.mature];
+ e.plant(run());
+ assert.equal(m.plants.thumbcorn.unlocked,1);
+ assert.deepEqual(m.plot[2][2],[0,0]);
+});
 test('market adapter uses official 2.058 price conversion, overhead and transaction lock',()=>{const g=make(),m=g.Objects.Bank.minigame,ctx=context(g,m);vm.runInContext(section(market,'M.buyGood=function','\n\t\tM.getRestingVal='),ctx);const e=new Engine(()=>g,memory());e.set({marketThresholds:{0:{buy:11,sell:30}},marketCap:5,marketBudget:100});e.locked=true;const before=g.cookies;e.trade();const q=m.goodsById[0];assert.equal(q.stock,5);assert.equal(before-g.cookies,10*(1+.2*.95**3)*g.cookiesPsRawHighest*5);q.val=40;const bank=g.cookies;e.trade();assert.equal(g.cookies,bank,'same tick sale must be blocked');q.last=0;e.trade();assert.equal(q.stock,0);assert.equal(g.cookies-bank,40*g.cookiesPsRawHighest*5);});
 test('pantheon adapter consumes swaps using official slot semantics',()=>{const g=make(),m=g.Objects.Temple.minigame,ctx=context(g,m);vm.runInContext(section(temple,'M.useSwap=function','\n\t\tM.dragging=false'),ctx);const e=new Engine(()=>g,memory());e.locked=true;e.set({gods:[0,1,2],swapReserve:1});e.pantheon();e.pantheon();e.pantheon();assert.equal(m.swaps,1);assert.deepEqual(m.slot,[0,1,-1]);});
 test('recommended Pantheon lineup agrees with the official drag, drop and swap recharge logic',()=>{

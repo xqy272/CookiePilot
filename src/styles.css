@@ -255,6 +255,12 @@ button.danger { color: var(--bad); }
 .lump-advice .row > svg { color: var(--accent); }
 .route-next { margin-block: 8px; padding: 8px; background: var(--soft); border-radius: 6px; font-size: 12px; }
 .route-next p { color: var(--muted); margin-top: 2px; }
+.management-layout { display: grid; grid-template-columns: minmax(115px,.65fr) minmax(0,1.65fr); align-items: start; gap: 10px; }
+.management-list { display: grid; gap: 3px; }
+.manage-choice { display: flex; justify-content: space-between; align-items: center; gap: 5px; min-height: 26px; padding-block: 3px; }
+.manage-choice[aria-pressed=true] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.managed-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--accent); }
+.management-detail > .field { margin-top: 8px; }
 .pantheon-advice { display: grid; gap: 6px; margin-top: 6px; }
 .pantheon-advice h4 { margin: 0; font-size: 13px; }
 .pantheon-advice .note { margin-top: 0; }
@@ -392,6 +398,9 @@ select option { background: var(--surface); color: var(--fg); }
 @media (max-width: 500px) {
   :host { --pad: 10px; --workbench-margin: 7px; }
   .rule-layout { grid-template-columns: minmax(0,1fr); }
+  .management-layout { grid-template-columns: minmax(0,1fr); }
+  .management-list { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; }
+  .manage-choice { min-width: 0; min-height: 28px; padding-inline: 6px; }
   .head small { display: none; }
   .nav { padding-inline: 2px; flex-direction: column; gap: 2px; font-size: 11px; }
   .group-shortcuts { grid-template-columns: repeat(2,minmax(0,1fr)); }

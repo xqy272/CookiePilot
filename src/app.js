@@ -1,6 +1,7 @@
 (() => {
 'use strict';
-const C=window.CookiePilotCore2,E=window.CookiePilotEngine2;if(!C||!E||window.top!==window)return;
+const C=window.CookiePilotCore2,E=window.CookiePilotEngine2,M=window.CookiePilotManagement;
+if(!C||!E||!M||window.top!==window)return;
 const demo=document.documentElement.dataset.cookiePilotDemo==='true';
 if(!demo&&(location.hostname!=='orteil.dashnet.org'||!/^\/cookieclicker\/(?:index\.html)?$/.test(location.pathname)))return;
 if(window.CookiePilot2){window.CookiePilot2.show();return;}window.CookiePilot?.destroy?.();
@@ -8,7 +9,7 @@ const esc=C.escape,F=C.fmt,T=C.time;
 const icons={cookie:'M20 12a5 5 0 0 1-6-6 4 4 0 0 1-5-4A10 10 0 1 0 22 15a4 4 0 0 1-2-3ZM7 9h.01M10 16h.01M16 17h.01M6 14h.01',home:'m3 10 9-7 9 7v10H3ZM9 20v-7h6v7',rules:'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6',buy:'M3 3h2l3 12h11l2-8H6M9 20h.01M18 20h.01',leaf:'M19 3C8 2 2 8 5 15s15 3 14-12ZM5 20 16 9',magic:'m4 20 13-13 3 3L7 23ZM4 3v4M2 5h4M17 1v4M15 3h4M21 15v4M19 17h4',market:'M3 3v18h18M7 15l4-5 4 3 6-8',growth:'M12 21V8M7 13l5-5 5 5M5 5h14',save:'M4 3h13l3 3v15H4ZM7 3v6h9V3M8 21v-7h8v7',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2',pause:'M8 5v14M16 5v14',play:'m7 4 14 8-14 8Z',close:'m6 6 12 12M6 18 18 6',spark:'m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z',clock:'M12 8v5l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',shield:'m12 2 8 4v7c0 5-8 9-8 9s-8-4-8-9V6ZM8 12l3 3 5-6',chevron:'m9 5 7 7-7 7',refresh:'M20 7a9 9 0 1 0 1 8M20 2v6h-6',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',flask:'M9 2h6M10 2v7l-6 10v3h16v-3L14 9V2M7 15h10',bell:'M6 17V9a6 6 0 0 1 12 0v8l2 2H4ZM10 22h4'};
 const I=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.spark}"/></svg>`;
 const host=document.createElement('div');host.id='cookie-pilot-v2';host.style.cssText='position:fixed;inset:0;z-index:1000000000;pointer-events:none;';const root=host.attachShadow({mode:'open'});(document.body||document.documentElement).append(host);
-const engine=new E.Engine(()=>window.Game,localStorage,{hidden:()=>document.hidden,change:()=>{theme();render();},log:()=>{}});
+const engine=new E.Engine(()=>window.Game,localStorage,{hidden:()=>document.hidden,change:()=>{theme();render();},notice:toast});
 let page='overview',search='',selectedTile='2,2',destroyed=false,timer,leaseRelease,leasePending=false,leaseEpoch=0,toastTimer,update=null,updateText='尚未检查',checking=false,lab=false,pending=null,liveAt=0,ruleAt=0,checkingAt=0;
 let leaseInOtherTab=false;
 const urls=new Set(),seen=new WeakSet();let audio=null;
@@ -17,6 +18,32 @@ const pages=[
  ['history','记录','clock'],['settings','设置','settings'],['storage','存档','save']
 ];
 const planTabs=[['purchase','采购与收益'],['combo','爆发组合'],['lumps','糖块与解锁'],['prestige','转生目标']];
+const managementModules={
+ garden:{title:'花园',link:'harvest',modes:[['seeds','培育新种子']],
+  scope:'从当前种子和地块选择亲本、留空突变格、收获新的成熟种子。保护格与已有作物保留。'},
+ magic:{title:'魔法书',link:'cast',modes:[['yield','收益与爆发']],
+  scope:"平时预测并召唤饼干，增益期间优先用命运之手叠加效果并拾取召唤的金饼干。不合适的序列可用 Haggler’s Charm 推进，反噬时升级价格暂涨 2%。"},
+ pantheon:{title:'万神殿',link:'pantheon',modes:[['lineup','补齐并维持阵容']],
+  scope:'保留已在槽的神灵，按当前挂机方式推荐空槽。第一次配置后维持这套阵容，遵守调换次数预留。'},
+ market:{title:'股市',link:'trade',modes:[['portfolio','分位交易']],
+  scope:'积累报价后按分位买卖。多笔订单共用仓位预算，优先退出达到净利目标的已知成本仓位。'},
+ dragon:{title:'养龙',link:'dragon',modes:[['hatch','孵化与抚摸'],['develop','训练与主光环']],
+  scope:'按预算购买龙蛋并训练。龙达到 8 级并解锁抚摸后，尝试集齐龙掉落。'},
+ season:{title:'季节收藏',link:'season',modes:[['collection','轮换并收集季节物品']],
+  scope:'圣诞收驯鹿并培养圣诞老人。复活节和万圣节收集随机掉落。情人节按预算逐件购买饼干。独立启用皱纹虫托管时优先按它的方案收取。'},
+ wrinklers:{title:'皱纹虫',link:'wrinkler',modes:[['yield','攒收益'],['drops','刷掉落']],
+  scope:'按用途等待储量和数量，再回收普通皱纹虫。始终保留闪光个体。'},
+ events:{title:'点击与事件',link:'click',modes:[['idle','日常挂机'],['burst','爆发连点']],
+  scope:'收取金饼干、驯鹿和幸运新闻。按设定速度连点，并遵守面纱和挑战保护。'},
+ purchase:{title:'采购',link:'purchase',modes:[['efficient','按回本采购']],
+  scope:'根据实际库存和收益比较建筑与升级，遵守保留线、黑名单和数量上限。'},
+ lumps:{title:'糖块',link:'lumpManaged',scope:'成熟收取，按授权路线解锁小游戏和提升建筑等级。'},
+ ascension:{title:'转生提醒',modes:[['notice','声望达标提醒']],
+  scope:'监测新增声望，达到目标时提醒。可从这里查看转生规划并打开游戏确认。'}
+};
+const defaultManagement={events:'idle',purchase:'efficient',garden:'seeds',magic:'yield',pantheon:'lineup',market:'portfolio',dragon:'hatch',wrinklers:'yield'};
+const managementDraft=new Map();
+let managementTab='garden';
 const viewStates=new Map();
 let shownView='',renderedControls='';
 root.innerHTML=`<style>${window.CookiePilotStyles2||''}</style>
@@ -229,7 +256,7 @@ function currentRule(group,g){
 }
 
 function activePage(){
- if(page==='queue')return'overview';
+ if(['queue','management'].includes(page))return'overview';
  if(['garden','magic','market','growth'].includes(page))return'automation';
  if(page==='purchase')return'planning';
  return page;
@@ -285,6 +312,10 @@ function ruleReport(g,c,key){
  const gate=automationGate(g,c);
  if(gate)return{label:'已暂停',text:gate,tone:'warn'};
  const state=engine.states[key]||'';
+ if(M.modes(g,c).garden&&['harvest','plant'].includes(key)){
+  const reason=engine.states.plant;
+  return{label:'托管中',text:reason&&reason!=='已关闭'?reason:'等待花园托管检查',tone:'good'};
+ }
  if(key==='harvest'||key==='plant'){
   const info=C.garden(g);
   if(info.m.freeze)return{label:'已冻结',text:'等待花园解除冻结',tone:'warn'};
@@ -317,7 +348,7 @@ function ruleReport(g,c,key){
   return{label:'待收取',text:'已到安全收取时间',tone:'good'};
  }
  if(key==='cast'){
-  const cast=C.castPlan(g,c,engine.lastCast);
+  const cast=M.modes(g,c).magic?M.spellPlan(g,c,engine.lastCast):C.castPlan(g,c,engine.lastCast);
   if(!cast.reason)return{label:'待施法',text:cast.spell.name+' · 消耗 '+F(cast.cost)+' 魔力',tone:'good'};
   const timed=Number.isFinite(cast.seconds);
   return{label:timed?(cast.reason==='等待魔力'?'等魔力':'冷却中'):'等待条件',
@@ -543,16 +574,19 @@ function unknownLots(market){
 function rulesView(g,c){
  const group=groups.find(item=>item.id===groupId);
  const key=currentRule(group,g);
- const report=ruleReport(g,c,key);
+ const run=M.execution(g,c),managed=M.owner(g,c,key);
+ const report=ruleReport(g,run,key);
  const locked=ruleLock(g,key);
  const action=group.analysis?btn(group.link,'navigate',group.analysis,'ghost'): '';
- return `<div class="rule-heading"><h2>${group.name}</h2>${action}</div>
+ const category=M.moduleForRule(key);
+ return `<div class="rule-heading"><h2>${group.name}</h2><div class="actions">${action}${category?btn('玩法托管','manage-module',category,'ghost'):''}</div></div>
   <div class="rule-layout">
    <section class="rule-card" aria-label="规则详情">
     <div class="card-title"><h3>${shortRules[key]}</h3>${tag(report.label,report.tone)}</div>
     ${key==='pantheon'&&!locked?c.pantheon?`<p class="rule-reason">${esc(report.text)}</p>`:'':
       `<p class="rule-reason" data-current-rule="${key}">${esc(report.text)}</p><p class="rule-copy">${esc(descriptions[key])}</p>`}
-    ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):ruleConfig[key](g,c)}
+    ${locked?btn('规划解锁','plan-unlock',unlocks[key][0],'ghost'):
+      managed?note(esc(managementModules[managed].title)+'托管正在接管此规则。')+btn('设置托管','manage-module',managed,'ghost'):ruleConfig[key](g,c)}
    </section>
    <section class="rule-card" aria-label="玩法状态"><h3>游戏状态</h3>
     ${facts(contextRows(g,c,group,key))}
@@ -566,18 +600,23 @@ function nextJobs(g,c){
  const add=(key,title,seconds,detail)=>{
   if(Number.isFinite(seconds))jobs.push({key,title,seconds:Math.max(0,seconds),detail});
  };
- if(c.harvest){
+ const managed=M.modes(g,c);
+ if(managed.garden){
+  const plan=M.gardenPlan(g,c);
+  if(plan.kind)add('plant',plan.reason,plan.seconds,'花园托管');
+ }
+ if(c.harvest&&!managed.garden){
   const info=C.garden(g);
   const tile=C.harvestTargets(g,c,info)[0];
   if(tile)add('harvest','收获 '+C.tileName(tile)+' 的'+tile.p.name,tile.mature?0:Math.max(info.next,tile.eta),'按花园生长速度估算');
  }
- if(c.plant){
+ if(c.plant&&!managed.garden){
   const tile=C.plantingPlan(g,c).tiles[0];
   if(tile)add('plant','在 '+C.tileName(tile)+' 补种'+tile.plant.name,0,'预计花费 '+F(tile.cost)+' 饼干');
  }
  if(c.cast){
-  const cast=C.castPlan(g,c,engine.lastCast);
-  if(cast.spell)add('cast','施放'+cast.spell.name,cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
+  const cast=managed.magic?M.spellPlan(g,c,engine.lastCast):C.castPlan(g,c,engine.lastCast);
+  if(cast.spell)add('cast','施放'+C.plain(cast.spell.name),cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
  }
  if(c.pantheon){
   const plan=C.pantheonPlan(g,c.gods,c.swapReserve);
@@ -596,10 +635,22 @@ function nextJobs(g,c){
    '保留 '+lumpCount(plan.reserve)+' · 目标 '+plan.target+' 级');
  }
  if(c.purchase&&!engine.rebuy.length){
-  const plan=C.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget});
+  const plan=M.purchasePlan(g,c,{bridgedTarget:engine.bridgedTarget});
   const item=plan.next||plan.target;
-  if(item)add('purchase','买入 '+item.name,plan.seconds,plan.bridge?'过渡购买可缩短目标等待时间':
+  if(item)add('purchase','买入 '+item.name,plan.seconds,plan.unlock?'准备解锁'+plan.unlock:plan.bridge?'过渡购买可缩短目标等待时间':
    item.shortfall>0?'还差 '+F(item.shortfall)+' 饼干 · 按当前被动产速估算':'买后预计保留 '+F(item.keep));
+ }
+ if(managed.market){
+  const order=M.marketOrder(g,c,engine.hist,engine.ledger).orders?.[0];
+  if(order)add('trade',(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units,0,'股市托管');
+ }
+ if(managed.dragon){
+  const plan=M.dragonPlan(g,c,managed.dragon);
+  if(plan.kind)add('dragon',plan.reason,0,'养龙托管');
+ }
+ if(managed.season){
+  const plan=M.seasonPlan(g,c);
+  if(plan.kind)add('season',plan.reason,0,'季节托管 · 花费 '+F(plan.cost)+' 饼干');
  }
  return jobs.sort((a,b)=>a.seconds-b.seconds);
 }
@@ -626,7 +677,8 @@ function jobRows(jobs,compact){
   </button>`).join('');
 }
 function runtimeState(g,c){
- const gate=automationGate(g,c),count=C.AUTO.filter(key=>c[key]).length;
+ const gate=automationGate(g,c),run=M.execution(g,c);
+ const count=C.AUTO.filter(key=>run[key]).length+Number(!!M.modes(g,c).ascension);
  if(engine.paused)return{label:'已暂停',tone:'warn',message:engine.startupHold?gate:'所有挂机规则已暂停'};
  if(gate)return{label:'等待中',tone:'warn',message:gate};
  if(!count)return{label:'未启用',tone:'',message:'尚未启用挂机规则'};
@@ -667,14 +719,124 @@ function nextSetup(g,c){
  }
  return'';
 }
+function managementNext(g,c,id,choice){
+ const run=M.execution(g,c);
+ switch(id){
+  case 'garden':return M.gardenPlan(g,run).reason;
+  case 'magic':{
+   const plan=M.spellPlan(g,run,engine.lastCast);
+   return plan.reason||'可施放 '+C.plain(plan.spell.name)+' · '+plan.detail;
+  }
+  case 'pantheon':{
+   const gods=c.managed.gods||M.pantheonLineup(g,run);
+   if(!gods)return'等待万神殿解锁';
+   const plan=C.pantheonPlan(g,gods,run.swapReserve);
+   return plan.reason+(plan.status==='waiting'&&Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):'');
+  }
+  case 'market':{
+   const plan=M.marketOrder(g,run,engine.hist,engine.ledger),order=plan.orders?.[0];
+   return order?(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units:plan.reason;
+  }
+  case 'dragon':{
+   const plan=M.dragonPlan(g,run,choice);
+   if(plan.kind)return plan.reason;
+   const aura=choice==='develop'&&M.growthAura(g,run);
+   if(aura)return '配置 '+(aura.aura.dname||aura.aura.name)+' · 牺牲 1 座 '+(aura.highest.dname||aura.highest.name);
+   const missing=M.dragonDrops(g);
+   if(g.dragonLevel>=8&&C.has(g,'Pet the dragon')){
+    if(missing.length)return '抚摸龙 · 还缺 '+missing.length+' 件掉落';
+    return '龙掉落已收齐 · '+plan.reason;
+   }
+   return plan.reason;
+  }
+  case 'season':return M.seasonPlan(g,run).reason;
+  case 'wrinklers':{
+   const plan=M.wrinklerPlan(g,run,choice);
+   return plan.target?'可收取普通皱纹虫 · 估算 '+F(plan.value)+' 饼干':plan.reason;
+  }
+  case 'events':return C.veil(g,run)?'闪烁面纱保护中':choice==='burst'&&!C.clickBuff(g)?'等待点击增益与自然事件':
+   '连点目标 '+run.rate+' 次/秒';
+  case 'purchase':{
+   const plan=M.purchasePlan(g,{...run,purchaseMode:'efficient',target:''});
+   return plan.next?'可购买 '+plan.next.name+' · '+F(plan.next.price)+' 饼干':plan.reason;
+  }
+  case 'ascension':return c.ascendTarget>0?'预计新增 '+F(C.prestige(g),0)+' / '+F(c.ascendTarget,0)+' 声望':'先在转生规划中设定声望目标';
+  default:return C.lumpRoutePlan(g,run).reason;
+ }
+}
+function managedScope(id,choice,c){
+ const module=managementModules[id];
+ if(id==='dragon')return module.scope+(choice==='develop'?
+  '训练至设定的 '+c.dragonMax+' 级，可能牺牲建筑。达标后可为尚未设置的主光环消耗一座最高阶建筑。':'训练最多至 5 级，先孵化并培养龙。');
+ if(id==='season')return module.scope+' 每轮转生最多 '+c.managed.seasonLimit+' 次季节切换。';
+ return module.scope;
+}
+function managementFields(id,c){
+ let options='';
+ if(id==='garden')options=field('gardenSpend','种植预算（可用饼干 %）','number',{min:0,max:100});
+ if(id==='magic')options=field('magicReserve','保留魔力','number',{min:0})+
+  field('castCooldown','施法冷却（秒）','number',{min:1,step:1});
+ if(id==='pantheon')options=field('swapReserve','保留调换次数','number',{min:0,max:3,step:1});
+ if(id==='market')options=field('marketBudget','总仓位预算（可用饼干 %）','number',{min:0,max:100})+
+  field('marketMinSamples','最低报价样本数','number',{min:5,max:2000,step:1})+
+  field('marketProfit','最低净利 %','number',{min:0})+
+  field('marketCap','单项仓位上限','number',{min:1,max:10000,step:1})+
+  field('marketBuy','买入分位 ≤ %','number',{min:0,max:49})+
+  field('marketSell','卖出分位 ≥ %','number',{min:51,max:100});
+ if(id==='dragon')options=field('dragonMax','训练等级上限','number',{min:0,max:27,step:1});
+ if(id==='events')options=field('rate','连点目标次数 / 秒','number',{min:1,max:40,step:1});
+ if(id==='purchase')options=select('reserveMode','饼干保留',reserveModes)+
+  (c.reserveMode==='custom'?field('reserve','保留饼干数','number',{min:0}):'')+
+  field('bulk','每次购买数量','number',{min:1,max:100,step:1})+
+  field('maxBuilding','单类建筑数量上限','number',{min:1,step:1});
+ return options?`<details class="advanced" data-state="manage-settings"><summary>设置预算与条件</summary><div class="fields">${options}</div></details>`:'';
+}
+function managementPage(g,c){
+ const active=M.modes(g,c),module=managementModules[managementTab];
+ const mode=active[managementTab];
+ const choice=managementDraft.get(managementTab)||mode||module.modes?.[0]?.[0];
+ const preview=choice?{...c,managed:{...c.managed,saveId:g.fullDate,modes:{...active,[managementTab]:choice}}}:c;
+ const actions=managementTab==='lumps'?btn('打开糖块托管','sugar-plan','managed','primary'):
+  btn(mode&&mode!==choice?'应用新方案':mode?'已开启托管':'开启托管','start-management',managementTab,'primary',
+   !C.compatible(g)||!g.fullDate||mode===choice)+
+  (mode?btn('停止托管','stop-management',managementTab,'ghost'):'');
+ const summary=managementNext(g,preview,managementTab,choice);
+ return `<div class="rule-heading">
+  <h2>玩法托管</h2>
+  <div class="actions">${btn('启用常用组合','management-common','','ghost',!C.compatible(g)||!g.fullDate)}${btn('执行队列','navigate','queue','ghost')}</div>
+ </div>
+ ${M.configured(c)&&c.managed.saveId!==g.fullDate?note('存档已切换。请在当前存档重新确认托管。'):''}
+ <div class="management-layout">
+  <div class="management-list" role="group" aria-label="选择托管玩法">${Object.entries(managementModules).map(([id,item])=>{
+   const running=id==='lumps'?C.managesLumps(g,c):active[id];
+   return `<button type="button" class="manage-choice" aria-pressed="${id===managementTab}" data-action="manage-module" data-arg="${id}">
+    <span>${item.title}</span>${running?'<span class="managed-dot" aria-label="已托管"></span>':''}</button>`;
+  }).join('')}</div>
+  <section class="rule-card management-detail" aria-label="托管方案">
+   <div class="card-title"><h3>${module.title}</h3>${mode||managementTab==='lumps'&&C.managesLumps(g,c)?tag(engine.paused?'已暂停':'已托管','good'):''}</div>
+   ${module.modes?.length>1?select('management-profile','托管目标',module.modes,choice):''}
+   <div class="route-next"><strong>下一步</strong><p>${esc(mode&&automationGate(g,c)||summary||'等待规则条件满足')}</p></div>
+   <div class="actions">${actions}
+    ${managementTab==='garden'?btn('查看地块','navigate','garden','ghost'):
+     module.link?btn('查看规则','open-rule',module.link,'ghost'):btn('调整声望目标','plan-tab','prestige','ghost')}
+   </div>
+   ${note(esc(managedScope(managementTab,choice,c)))}
+   ${managementTab==='season'?select('managed-season-limit','本轮季节切换上限',Array.from({length:12},(_,i)=>[i+1,(i+1)+' 次']),c.managed.seasonLimit):''}
+   ${managementFields(managementTab,c)}
+  </section>
+ </div>`;
+}
 function compactOverview(g,c){
- const status=runtimeState(g,c);
- const jobs=nextJobs(g,c);
- const [first,...rest]=protections(g,c);
- const enabled=C.AUTO.some(key=>c[key]);
- const suggestion=nextSetup(g,c);
+ const run=M.execution(g,c),status=runtimeState(g,c);
+ const jobs=nextJobs(g,run);
+ const [first,...rest]=protections(g,run);
+ const enabled=M.active(g,c);
+ const suggestion=nextSetup(g,run);
  return `<div class="overview">
-  <div class="overview-heading"><h2>挂机总览</h2>${enabled?btn('查看队列','navigate','queue','ghost'):btn('配置日常挂机','preset','idle','primary')}</div>
+  <div class="overview-heading"><h2>挂机总览</h2><div class="actions">
+   ${btn('玩法托管','navigate','management','primary')}
+   ${enabled?btn('查看队列','navigate','queue','ghost'):''}
+  </div></div>
   ${activity()}
   <section class="rule-card overview-next" aria-label="下一步执行">
    <div class="card-title"><h3>下一步</h3>${enabled?'':btn('查看队列','navigate','queue','ghost')}</div>
@@ -685,13 +847,14 @@ function compactOverview(g,c){
    ${rest.length?`<small>另 ${rest.length} 项</small>`:I('chevron')}</button>`:''}
   ${suggestion?`<section class="lump-advice" aria-label="建议下一步">${suggestion}</section>`:''}
   <div class="group-shortcuts" role="group" aria-label="玩法入口">${groups.map(group=>{
-   const count=group.rules.filter(key=>c[key]).length;
+   const count=group.rules.filter(key=>run[key]).length;
    return btn(I(group.icon)+`<span>${esc(group.short||group.name)}</span><small>${count}/${group.rules.length}</small>`,'rule-group',group.id,count?'enabled':'');
   }).join('')}</div>
  </div>`;
 }
 function queuePage(g,c){
- const jobs=nextJobs(g,c),held=protections(g,c);
+ const run=M.execution(g,c);
+ const jobs=nextJobs(g,run),held=protections(g,run);
  const gate=automationGate(g,c);
  return `<div class="rule-heading"><h2>执行队列</h2>${btn('返回总览','navigate','overview','ghost')}</div>
   <section class="rule-card queue-card" aria-label="预计执行">
@@ -919,7 +1082,7 @@ function comboPlanning(g,c){
   (C.mini(g,'Wizard tower')?btn('查看法术预测','navigate','magic','ghost'):note('将巫师塔升至 1 级可查看施法条件。'));
 }
 
-const renderers={overview:compactOverview,queue:queuePage,planning:planningPage,history:logsPage,
+const renderers={overview:compactOverview,queue:queuePage,management:managementPage,planning:planningPage,history:logsPage,
  automation:rulesView,garden:gardenPage,magic:magicPage,market:marketPage,growth:growthPage,storage:storagePage,settings:settingsPage};
 function actionSelector(action,arg){
  return '[data-action="'+CSS.escape(action)+'"][data-arg="'+CSS.escape(arg||'')+'"]';
@@ -963,7 +1126,8 @@ function render(){
  if(destroyed)return;
  rememberPosition();
  const view=page==='automation'?[page,groupId,currentRule(groups.find(g=>g.id===groupId),engine.g)].join('/'):
-  page==='planning'?[page,planTab,planTab==='lumps'?lumpView:''].join('/'):page;
+  page==='planning'?[page,planTab,planTab==='lumps'?lumpView:''].join('/'):
+  page==='management'?page+'/'+managementTab:page;
  const sameView=shownView===view;
  const focus=sameView?focusSelector(root.activeElement):'';
  const position=viewStates.get(view);
@@ -1016,7 +1180,7 @@ function releaseLease(){
  engine.lastPulse=0;
 }
 function wantsLease(){
- return !destroyed&&C.AUTO.some(k=>engine.c[k])&&!C.gate(engine.g,engine.c,{paused:engine.paused,hidden:document.hidden});
+ return !destroyed&&M.active(engine.g,engine.c)&&!C.gate(engine.g,engine.c,{paused:engine.paused,hidden:document.hidden});
 }
 async function lease(){
  if(!wantsLease()){
@@ -1058,7 +1222,8 @@ function loop(){if(destroyed)return;const now=performance.now();engine.click(now
   }
  }
  if(!demo&&engine.c.updateCheck&&C.ready(engine.g)&&Date.now()-checkingAt>86400000){checkingAt=Date.now();void checkUpdate();}
- const activelyClicking=engine.c.click&&!['noClick','both'].includes(engine.c.challenge)&&engine.locked&&!C.gate(engine.g,engine.c,engine.env())&&!C.veil(engine.g,engine.c)&&(engine.c.clickMode!=='buff'||C.clickBuff(engine.g));
+ const run=M.execution(engine.g,engine.c);
+ const activelyClicking=run.click&&!['noClick','both'].includes(run.challenge)&&engine.locked&&!C.gate(engine.g,run,engine.env())&&!C.veil(engine.g,run)&&(run.clickMode!=='buff'||C.clickBuff(engine.g));
  const delay=activelyClicking?Math.max(5,Math.min(100,(engine.next.click||0)-performance.now())):100;timer=setTimeout(loop,delay);
 }
 function preset(name){
@@ -1073,14 +1238,58 @@ function preset(name){
  const disabled=C.AUTO.filter(key=>engine.c[key]&&!value[key]).map(key=>shortRules[key]);
  ask('应用'+label,{
   rows:[['开启规则',on.join('、')||'无'],['关闭规则',disabled.join('、')||'无'],
+   ...(name==='observe'&&M.configured(engine.c)?[['玩法托管','全部停止']]:[]),
    ...(value.purchase?[['饼干保留',reserveModes.find(([key])=>key===engine.c.reserveMode)[1]]]:[])],
   message:engine.paused?'当前已暂停，点击「继续」后执行。':'',
   button:'应用方案'
  },()=>{
-   engine.set({...off,...value});
+   engine.set({...off,...value,...(name==='observe'?{managed:{...engine.c.managed,modes:{},gods:null}}:{})});
    void lease();
    toast('已应用'+label);
   });
+}
+function confirmManagement(id){
+ const g=engine.g;
+ if(!C.compatible(g)||!Number.isSafeInteger(g.fullDate)||g.fullDate<=0)return;
+ const saveId=g.fullDate;
+ engine.syncSharedSettings();
+ const current=engine.c,catalog=managementModules[id],active=M.modes(g,current);
+ const chosen=id==='common'?Object.fromEntries(Object.entries(defaultManagement).filter(([key])=>!active[key])):
+  {[id]:managementDraft.get(id)||active[id]||catalog.modes[0][0]};
+ if(!Object.keys(chosen).length){toast('常用玩法已全部加入托管');return;}
+ const next={...current,managed:{...current.managed,saveId,modes:{...active,...chosen}}};
+ const mode=chosen[id];
+ const title=id==='common'?'开启常用托管组合':'开启'+catalog.title+'托管';
+ const rows=id==='common'?[
+  ['托管玩法',Object.keys(chosen).map(key=>managementModules[key].title).join('、')],
+  ['饼干保留',reserveModes.find(([key])=>key===current.reserveMode)[1]],
+  ['股市仓位上限',F(current.marketBudget,0)+'%'],
+  ['养龙范围','孵化，训练最多至 5 级']
+ ]:[['托管目标',catalog.modes.find(([key])=>key===mode)[1]],['预计下一步',managementNext(g,next,id,mode)]];
+ const message=id==='common'?'按存档选择亲本、阵容和交易机会。魔法书可用 Haggler’s Charm 推进序列，反噬时升级价格短期上涨 2%。':
+  managedScope(id,mode,current);
+ ask(title,{rows,message:message+(engine.paused?'\n点击「继续」后执行。':''),button:'确认托管'},()=>{
+  if(!C.compatible(engine.g)||engine.g.fullDate!==saveId)throw Error('存档已变化，请重新确认');
+  engine.syncSharedSettings();
+  const previous=engine.c.managed,valid=previous.saveId===saveId;
+  const selections=valid?{...previous.modes}:{};
+  for(const [key,value] of Object.entries(chosen)){
+   if(id!=='common'||!selections[key])selections[key]=value;
+  }
+  engine.set({managed:{...previous,saveId,modes:selections,gods:valid?previous.gods:null}});
+  engine.log(title+' · '+Object.keys(chosen).map(key=>managementModules[key].title).join('、'));
+  void lease();
+ });
+}
+function stopManagement(id){
+ engine.syncSharedSettings();
+ const current=engine.c.managed,modes={...current.modes};
+ if(!M.modes(engine.g,engine.c)[id])return;
+ delete modes[id];
+ engine.set({managed:{...current,modes,gods:id==='pantheon'?null:current.gods}});
+ managementDraft.delete(id);
+ engine.log('已停止'+managementModules[id].title+'托管');
+ void lease();
 }
 const dangerousRules={dragon:'将按目标等级自动训练龙，可能牺牲大量建筑。',aura:'会消耗最高阶建筑来维持你选定的光环方案。',pantheon:'将使用调换次数维持神灵方案。',godzamok:'点击增益时出售选定建筑，然后按预算回购。',season:'将花费饼干切换到你指定的季节。',trade:'将按条件买卖游戏中的股票，实际利润不能保证。',cast:'将按配置自动施法，可能反噬或改变资源。'};
 function toggleProtection(key){
@@ -1113,7 +1322,7 @@ function assignPantheon(){
  });
 }
 function startLumpManaged(mode=engine.c.lumpManagedMode){
- engine.syncLumpSettings();
+ engine.syncSharedSettings();
  const g=engine.g,c=engine.c,saveId=g.fullDate;
  if(!C.compatible(g)||!Number.isSafeInteger(saveId)||saveId<=0){toast('等待受支持的存档加载');return;}
  const {lumpReserveMode,lumpReserve}=c;
@@ -1130,7 +1339,7 @@ function startLumpManaged(mode=engine.c.lumpManagedMode){
    c.lumpLevel?'当前单栋升级任务会暂停。':'',engine.paused?'点击「继续」后执行。':''].filter(Boolean).join('\n'),
   button:'确认托管'
  },()=>{
-  engine.syncLumpSettings();
+  engine.syncSharedSettings();
   const latest=engine.c;
   if(!C.compatible(engine.g)||saveId!==engine.g.fullDate||latest.lumpReserveMode!==lumpReserveMode||latest.lumpReserve!==lumpReserve){
    throw Error('存档或保留策略已变化，请重新确认');
@@ -1142,7 +1351,7 @@ function startLumpManaged(mode=engine.c.lumpManagedMode){
 }
 function assignLumpGoal(draft){
  const g=engine.g;
- engine.syncLumpSettings();
+ engine.syncSharedSettings();
  const goal={buildingId:draft?.buildingId,level:draft?.level,saveId:g.fullDate};
  const plan=C.lumpPlan(g,engine.c,goal);
  if(!C.compatible(g)||!Number.isSafeInteger(goal.saveId)||goal.saveId<=0){
@@ -1163,7 +1372,7 @@ function assignLumpGoal(draft){
    engine.paused?'点击「继续」后检查预算。':progress].filter(Boolean).join('\n'),
   button:'安排升级'
  },()=>{
-   engine.syncLumpSettings();
+   engine.syncSharedSettings();
    const fresh=C.lumpPlan(engine.g,engine.c,goal);
    if(!C.compatible(engine.g)||!fresh.object||fresh.status==='different-save'||fresh.reserve!==plan.reserve||fresh.totalCost>plan.totalCost){
     throw Error('存档、等级或保留量已变化，请重新确认');
@@ -1201,6 +1410,25 @@ root.addEventListener('change',event=>{
    const gods=[...engine.c.gods];gods[Number(key.slice(4))]=Number(value);engine.set({gods});return;
   }
   if(key==='pantheon-profile'){pantheonProfile=value;render();return;}
+  if(key==='management-profile'){managementDraft.set(managementTab,value);render();return;}
+  if(key==='managed-season-limit'){
+   const limit=Number(value);
+   const apply=()=>{
+    engine.syncSharedSettings();
+    engine.set({managed:{...engine.c.managed,seasonLimit:limit}});
+   };
+   if(M.modes(engine.g,engine.c).season){
+    el.value=engine.c.managed.seasonLimit;
+    ask('调整季节切换上限',{rows:[['本轮累计上限',limit+' 次']],button:'保存上限'},apply);
+   }else apply();
+   return;
+  }
+  if(key==='dragonMax'&&M.modes(engine.g,engine.c).dragon==='develop'&&Number(value)>engine.c.dragonMax){
+   const level=C.config({...engine.c,dragonMax:value}).dragonMax;
+   el.value=engine.c.dragonMax;
+   ask('提高龙训练上限',{rows:[['新目标等级',level+' 级']],message:'后续训练可能消耗建筑。',button:'提高上限'},()=>engine.set({dragonMax:level}));
+   return;
+  }
   if(key==='lumpManagedMode'&&engine.c.lumpManaged){
    el.value=engine.c.lumpManagedMode;
    if(value!==el.value)startLumpManaged(value);
@@ -1255,6 +1483,12 @@ root.addEventListener('click',async event=>{
  const action=b.dataset.action,arg=b.dataset.arg,g=engine.g,c=engine.c;
  try{
  if(action==='navigate'){navigate(arg);return;}
+ if(action==='manage-module'&&Object.hasOwn(managementModules,arg)){
+  managementTab=arg;navigate('management',actionSelector(action,arg));return;
+ }
+ if(action==='start-management'){confirmManagement(arg);return;}
+ if(action==='stop-management'){stopManagement(arg);return;}
+ if(action==='management-common'){confirmManagement('common');return;}
  if(action==='rule-group'){
   groupId=arg;
   navigate('automation',actionSelector('rule-group',arg));
@@ -1357,7 +1591,7 @@ root.addEventListener('click',async event=>{
   if(plan.status!=='ready')throw Error(plan.reason);
   ask('提升 '+plan.name+' 等级','消耗 '+lumpCount(plan.nextCost)+'，保留至少 '+lumpCount(plan.reserve)+'。',()=>{
    engine.manualGate();
-   engine.syncLumpSettings();
+   engine.syncSharedSettings();
    const fresh=C.lumpPlan(engine.g,engine.c,goal);
    if(fresh.status!=='ready')throw Error(fresh.reason);
    if(fresh.object!==object||fresh.current!==plan.current)throw Error('建筑等级已变化，请重新确认');
@@ -1397,7 +1631,7 @@ function visibility(){
 function syncStorage(event){
  if(event.key===E.SETTINGS){
   const before=JSON.stringify(engine.c);
-  if(!engine.syncLumpSettings()||before===JSON.stringify(engine.c))return;
+  if(!engine.syncSharedSettings()||before===JSON.stringify(engine.c))return;
   void lease();
   if(engine.c.open&&!$('confirm').open)render();
   return;

@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "2.3.0",
+  "version": "2.4.0",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "加入万神殿阵容推荐与预算，以及糖块成熟收取和按路线连续分配的托管。",
+  "notes": "加入统一玩法托管，覆盖花园育种、魔法、万神殿、股市、养龙、季节与皱纹虫，按存档显示下一步。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.3.0/CookiePilot-v2.3.0.zip",
-  "sha256": "aee12c17b0cdc2f6fe597b99ddbf72333399913c21d152e644963d1091fafba2"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.4.0/CookiePilot-v2.4.0.zip",
+  "sha256": "b942c0e62f08014e6409c5d8a53ca3d03d89bf7cf78c3fa8703f1d8f72c22f61"
 }

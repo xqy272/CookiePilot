@@ -1,6 +1,13 @@
 (() => {
 const button=document.getElementById('demo-tests'),out=document.getElementById('result');if(!button)return;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));const assert=(a,m)=>{if(!a)throw Error(m);};
+async function waitFor(predicate,message){
+ const until=Date.now()+3600;
+ while(!predicate()){
+  assert(Date.now()<until,message);
+  await delay(50);
+ }
+}
 button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独立模拟存档测试…\n';let passed=0,total=0;const checks=[];
  const test=async(name,fn)=>{total++;try{await fn();passed++;out.textContent+='✓ '+name+'\n';checks.push({name,ok:true});}catch(e){out.textContent+='✗ '+name+'：'+e.message+'\n';checks.push({name,ok:false,error:e.message});}};
  let app=window.CookiePilot2,e=app.engine,g=window.Game;e.set(Object.fromEntries(CookiePilotCore2.AUTO.map(k=>[k,false])));e.paused=false;
@@ -41,6 +48,41 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   assert(root().querySelectorAll('.next-job').length<=2,'首屏动作过多');
   click('[data-action="navigate"][data-arg="queue"]');
   assert(root().getElementById('main').textContent.includes('执行队列'),'执行队列不可用');
+ });
+ await test('统一托管入口，可预览组合并独立启停每种玩法',async()=>{
+  const m=g.Objects.Farm.minigame;
+  const frozen=m.freeze,stage=m.plants.bakeberry.unlocked,unlocked=m.plantsUnlockedN,buffer=structuredClone(m.plot);
+  const managedBefore=structuredClone(e.c.managed);
+  const bounds=JSON.stringify(root().querySelector('.window').getBoundingClientRect());
+  try{
+   e.set({managed:{saveId:0,modes:{}},harvest:false,plant:false,click:false,golden:false});
+   m.freeze=0;m.plants.bakeberry.unlocked=0;m.plot[4][3]=[m.plants.bakeberry.id+1,70];
+   page('overview');click('[data-action="navigate"][data-arg="management"]');
+   const panel=root().getElementById('main');
+   assert(panel.querySelectorAll('[data-action="manage-module"]').length===11,'托管页没有覆盖各玩法');
+   assert(JSON.stringify(root().querySelector('.window').getBoundingClientRect())===bounds,'新增托管页改变面板尺寸');
+   click('[data-action="management-common"]');
+   assert(root().getElementById('confirm-text').textContent.includes('花园')&&!e.c.managed.modes.garden,'预览组合改变了托管设置');
+   click('#confirm-cancel');
+   click('[data-action="manage-module"][data-arg="garden"]');
+   assert(panel.querySelector('.route-next').textContent.includes('烘焙浆果'),'启动前看不到存档中的下一步');
+   click('[data-action="start-management"][data-arg="garden"]');click('#confirm-ok');
+   await waitFor(()=>m.plants.bakeberry.unlocked,'托管未在取得执行权后收获成熟种子');
+   assert(m.plants.bakeberry.unlocked&&e.c.managed.modes.garden==='seeds'&&!e.c.harvest,'启用托管未执行收获，或覆写了单项规则');
+   click('[data-action="manage-module"][data-arg="events"]');
+   click('[data-action="start-management"][data-arg="events"]');click('#confirm-ok');
+   const event=g.spawn();
+   await waitFor(()=>event.popped,'托管未拾取金饼干');
+   assert(event.popped&&e.c.managed.modes.events==='idle'&&!e.c.golden,'事件托管未调度原有拾取');
+   click('[data-action="manage-module"][data-arg="garden"]');click('[data-action="stop-management"][data-arg="garden"]');
+   assert(!e.c.managed.modes.garden&&e.c.managed.modes.events,'停止花园影响了其他托管');
+   click('[data-action="manage-module"][data-arg="lumps"]');
+   click('[data-action="sugar-plan"][data-arg="managed"]');
+   assert(panel.querySelector('[aria-label="糖块托管"]'),'糖块入口未连接');
+  }finally{
+   m.freeze=frozen;m.plants.bakeberry.unlocked=stage;m.plantsUnlockedN=unlocked;m.plot=buffer;
+   e.set({managed:managedBefore});
+  }
  });
  await test('返回采购时保留搜索、展开与滚动位置',async()=>{
   page('purchase');
@@ -148,12 +190,13 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    click('[data-action="start-lump-managed"]');
    const info=root().getElementById('confirm-text').textContent;
    assert(info.includes('完全成熟后收取')&&info.includes('继续收取并储存')&&!e.c.lumpManaged,'托管未明确范围或未经确认启用');
-   click('#confirm-ok');await delay(1400);
+   click('#confirm-ok');
+   await waitFor(()=>Temple.level===1,'托管未在取得执行权后解锁万神殿');
    assert(Temple.level===1&&Farm.level===0&&g.lumps===0&&e.c.lumpManaged,'托管未等待下一颗');
    page('overview');click('[data-action="navigate"][data-arg="queue"]');
    assert(/农场升至 1 级/.test(workspace.textContent),'第二个目标未进入队列');
    g.lumpT=Date.now()-g.lumpRipeAge-100;
-   await delay(1400);
+   await waitFor(()=>Farm.level===1,'托管未在收取成熟糖块后解锁花园');
    assert(Farm.level===1&&g.lumps===0&&e.c.lumpManaged,'没有自动收取并转到第二个目标');
    page('planning');click('[data-action="stop-lump-managed"]');
    assert(!e.c.lumpManaged&&!e.c.lump,'停止时托管的收取未退出');
@@ -178,7 +221,8 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    assert(panel.textContent.includes('Rigidel')&&panel.textContent.includes('139'),'没有根据建筑总数解释糖块条件');
    click('[data-action="apply-pantheon"]');
    assert(!e.c.pantheon&&m.swaps===3&&root().getElementById('confirm-text').textContent.includes('需要调换2 次'),'预览已动用次数或未说明次数');
-   click('#confirm-ok');await delay(1400);
+   click('#confirm-ok');
+   await waitFor(()=>m.slot[0]===m.gods.order.id,'万神殿未在取得执行权后应用阵容');
    assert(m.slot[0]===m.gods.order.id&&m.swaps===2&&m.slot[1]===-1,'未应用阵容或动用了保留次数');
    page('overview');click('[data-action="navigate"][data-arg="queue"]');
    assert(/红宝石槽配置 Jeremy/.test(panel.textContent),'恢复调换后要做的事不在队列');
