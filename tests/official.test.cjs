@@ -8,6 +8,8 @@ function context(g,m){const node={style:{},setAttribute(){},classList:{add(){},r
 const rngSource=section(main,'(function(a,b,c,d,e,f){','\n\nfunction bind');
 test('automatic first ascension uses the official prices, prestige arithmetic, purchase API and slot dialog',()=>{
  const g=make('ascension'),ctx=context(g,null),data=new Map();
+ assert.match(main,/Game\.UpgradesById\s*=\s*\{\}/);
+ assert.equal(Array.isArray(g.UpgradesById),false);
  const storage={getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value),removeItem:key=>data.delete(key)};
  g.Has=name=>!!g.Upgrades[name]?.bought||g.owned.has(name);
  g.Upgrade=function(){};

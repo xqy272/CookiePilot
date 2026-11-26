@@ -124,6 +124,31 @@ test('ascension retries from the original normal save after a reload in heaven',
  assert.equal(g.heavenlyChips,351);
 });
 
+test('a paused 3.0.0 ascent resumes at the permanent slot without buying its upgrades again',()=>{
+ const {g,engine,create,tick,storage}=setup({ascension:'cycle'}, {},'ascension');
+ for(let n=0;n<12;n++)tick(engine);
+ assert.equal(g.OnAscend,1);
+ const job=engine.ascentJob();
+ assert.equal(job.phase,'buying');
+ assert.equal(M.heavenlyBudget(g,job.names).rows.length,0);
+ assert.equal(g.heavenlyChips,351);
+ assert.equal(Array.isArray(g.UpgradesById),false);
+ engine.stopForRecovery('自动转生未继续：(g.UpgradesById || []).filter is not a function');
+ const settingsKey='cookie-pilot:settings:v2';
+ const settings=JSON.parse(storage.getItem(settingsKey));
+ storage.setItem(settingsKey,JSON.stringify({...settings,version:'3.0.0'}));
+ const resumed=create();
+ tick(resumed);
+ assert.equal(g.permanentUpgrades[0],-1);
+ assert.equal(g.resets,0);
+ resumed.setPaused(false);
+ for(let n=0;n<4;n++)tick(resumed);
+ assert.equal(g.resets,1);
+ assert.equal(g.heavenlyChips,351);
+ assert.equal(g.permanentUpgrades[0],g.Upgrades['Kitten helpers'].id);
+ assert(!resumed.ascentJob());
+});
+
 test('a distant heavenly target allows a growth ascension while retaining saved chips',()=>{
  const {g,engine}=setup({ascension:'cycle'}, {},'ascension');
  for(const item of g.UpgradesByPool.prestige.slice(0,11))item.bought=1;

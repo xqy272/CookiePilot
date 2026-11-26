@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Cookie Pilot · 饼干领航员",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Cookie Clicker 全流程中文助手：现代工作台、花园、魔法、股市、自动采购与备份。",
   "minimum_chrome_version": "111",
   "permissions": [

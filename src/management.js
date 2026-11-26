@@ -204,12 +204,13 @@ function ascensionPrep(g,c){
 }
 function permanentSlots(g){
  const slots=g.permanentUpgrades||[];
- const eligible=(g.UpgradesById||[]).filter(u=>u?.bought&&u.unlocked&&!u.noPerm&&
+ const upgrades=g.UpgradesById||{};
+ const eligible=Object.values(upgrades).filter(u=>u?.bought&&u.unlocked&&!u.noPerm&&
   (u.pool===''||u.pool==='cookie')&&u.kitten);
  const owned=eligible.sort((a,b)=>b.basePrice-a.basePrice||b.id-a.id);
  for(const [slot,suffix] of ['I','II','III','IV','V'].entries()){
   if(!C.has(g,'Permanent upgrade slot '+suffix))continue;
-  const existing=g.UpgradesById?.[slots[slot]];
+  const existing=upgrades[slots[slot]];
   const upgrade=owned.find(u=>!slots.includes(u.id));
   if(upgrade&&(!existing||existing.kitten&&upgrade.basePrice>existing.basePrice))return{slot,upgrade};
  }

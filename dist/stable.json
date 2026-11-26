@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "3.0.0",
+  "version": "3.0.1",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "自动转生与跨轮经营、研究托管、金饼干爆发、功能升级采购、建筑回购恢复及挂机诊断。",
+  "notes": "修复自动转生选择永久栏时发生的异常，更新后可从已暂停的转生继续。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.0.0/CookiePilot-v3.0.0.zip",
-  "sha256": "04b990c61280838e8f7f48e79cd2f55b38436fba4e73c583e306fe94f016dbb1"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.0.1/CookiePilot-v3.0.1.zip",
+  "sha256": "3c69acf40f7e117f3fa1db4ca63f84e978f8c83b24b26d51068bc0497d837861"
 }

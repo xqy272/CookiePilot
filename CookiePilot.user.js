@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cookie Pilot · 饼干领航员
 // @namespace    https://github.com/xqy272/CookiePilot
-// @version      3.0.0
+// @version      3.0.1
 // @description  全流程 Cookie Clicker 中文助手：现代工作台、采购、花园、法术、股市、成长、存档与在线更新。
 // @author       Cookie Pilot contributors
 // @match        https://orteil.dashnet.org/cookieclicker/
@@ -19,11 +19,11 @@
 // @downloadURL  https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js
 // ==/UserScript==
 
-/* Cookie Pilot 3.0.0 · MIT · bundled locally; no remote executable code. */
+/* Cookie Pilot 3.0.1 · MIT · bundled locally; no remote executable code. */
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='3.0.0', SUPPORTED='2.058';
+const VERSION='3.0.1', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const MANAGED_MODES={
  events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield','combo'],pantheon:['lineup'],
@@ -701,12 +701,13 @@ function ascensionPrep(g,c){
 }
 function permanentSlots(g){
  const slots=g.permanentUpgrades||[];
- const eligible=(g.UpgradesById||[]).filter(u=>u?.bought&&u.unlocked&&!u.noPerm&&
+ const upgrades=g.UpgradesById||{};
+ const eligible=Object.values(upgrades).filter(u=>u?.bought&&u.unlocked&&!u.noPerm&&
   (u.pool===''||u.pool==='cookie')&&u.kitten);
  const owned=eligible.sort((a,b)=>b.basePrice-a.basePrice||b.id-a.id);
  for(const [slot,suffix] of ['I','II','III','IV','V'].entries()){
   if(!C.has(g,'Permanent upgrade slot '+suffix))continue;
-  const existing=g.UpgradesById?.[slots[slot]];
+  const existing=upgrades[slots[slot]];
   const upgrade=owned.find(u=>!slots.includes(u.id));
   if(upgrade&&(!existing||existing.kitten&&upgrade.basePrice>existing.basePrice))return{slot,upgrade};
  }
