@@ -222,7 +222,7 @@ class Engine{
    const g=this.g;
    this.checkMilestones(g);
    if(this.considerAscension(g,now))return;
-    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
+    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['season',this.season],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura]]){
     if(k==='lump'&&C.managesLumps(g,this.c))continue;
     if(k==='harvest'&&M.modes(g,this.c).garden)continue;
     const run=M.execution(g,this.c);

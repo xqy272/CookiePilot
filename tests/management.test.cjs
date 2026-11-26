@@ -170,6 +170,9 @@ test('season management advances after a collection and respects the actual swit
  assert.match(M.seasonPlan(g,run()).reason,/继续收集/);
  g.Upgrades['christmas cookie'].unlocked=1;
  assert.equal(run().deer,false);
+ assert.equal(M.seasonPlan(g,run()).upgrade,g.Upgrades['christmas cookie']);
+ e.season(run());
+ assert(g.Has('christmas cookie'));
  assert.equal(M.seasonPlan(g,run()).key,'valentines');
  e.season(run());
  assert.equal(g.season,'valentines');
@@ -178,9 +181,87 @@ test('season management advances after a collection and respects the actual swit
  e.season(run());
  assert(g.Has('valentines cookie'));
  assert.equal(M.seasonPlan(g,run()).reason,'已收集支持的季节掉落');
- g.Upgrades['christmas cookie'].unlocked=0;
+ g.reindeerDrops.push('Bell biscuits');
  g.seasonUses=4;
  assert.match(M.seasonPlan(g,run()).reason,/4 次上限/);
+});
+
+test('season management buys unlocked rewards across seasons and keeps the Chocolate egg',()=>{
+ const {g,e,run}=setup({season:'collection'});
+ const makeReward=(name,id,cost)=>{
+  const item={name,id,pool:'',unlocked:1,bought:0,getPrice:()=>cost,buy(){
+   g.Spend(cost);
+   this.bought=1;
+   g.owned.add(name);
+  }};
+  g.Upgrades[name]=item;
+  return item;
+ };
+ const reindeer=makeReward('Reindeer baking grounds',800,200);
+ const sleigh=makeReward('Weighted sleighs',801,300);
+ const dominion=makeReward("Santa's dominion",802,400);
+ const halloween=makeReward('Skull cookies',803,100);
+ const omelette=makeReward('Omelette',804,500);
+ const chocolate=g.Upgrades['Chocolate egg'];
+ g.santaDrops=[sleigh.name,reindeer.name];
+ g.halloweenDrops=[halloween.name];
+ g.easterEggs=[omelette.name,chocolate.name];
+ g.season='easter';
+ g.seasonUses=4;
+ g.vault=[halloween.id];
+ e.set({blocked:['u:'+sleigh.id]});
+ assert.equal(M.seasonPlan(g,run()).upgrade,reindeer);
+ e.season(run());
+ assert(reindeer.bought);
+ assert.equal(M.seasonPlan(g,run()).upgrade,omelette);
+ e.season(run());
+ assert.equal(M.seasonPlan(g,run()).upgrade,dominion);
+ e.season(run());
+ assert(dominion.bought);
+ assert.equal(sleigh.bought,0);
+ assert.equal(halloween.bought,0);
+ assert.equal(chocolate.bought,0);
+ assert.match(M.seasonPlan(g,run()).reason,/保护/);
+ g.vault=[];
+ e.season(run());
+ assert(halloween.bought);
+});
+
+test('season purchases observe reserves and wait until click bursts finish',()=>{
+ const {g,e,run}=setup({season:'collection'},{reserveMode:'custom',reserve:100,purchase:true});
+ const item=g.Upgrades['christmas cookie'];
+ g.reindeerDrops=[item.name];
+ g.cookies=item.getPrice()+99;
+ assert.match(M.seasonPlan(g,run()).reason,/等待购买预算/);
+ g.cookies++;
+ g.buffs['Click frenzy']={multClick:777};
+ assert.match(M.seasonPlan(g,run()).reason,/爆发/);
+ delete g.buffs['Click frenzy'];
+ assert.equal(M.seasonPlan(g,run()).upgrade,item);
+ e.pulse();
+ assert(item.bought);
+ assert.equal(g.cookies,100);
+});
+
+test('Santa training reaches the final reward after all regular gifts have unlocked',()=>{
+ const {g,e,run}=setup({season:'collection'});
+ g.season='christmas';
+ g.owned.add('A festive hat');
+ g.santaLevel=13;
+ g.cookies=1e20;
+ const gift=g.Upgrades['christmas cookie'];
+ g.santaDrops=[gift.name];
+ gift.bought=1;
+ g.owned.add(gift.name);
+ const final=g.Upgrades["Santa's dominion"]={name:"Santa's dominion",id:800,unlocked:0,bought:0,
+  getPrice:()=>100,buy(){g.Spend(100);this.bought=1;g.owned.add(this.name);}};
+ g.UpgradeSanta=()=>{g.santaLevel++;final.unlocked=1;};
+ assert(M.seasonRewards(g).christmas.includes(final.name));
+ assert.equal(M.seasonPlan(g,run()).next,14);
+ e.season(run());
+ assert.equal(M.seasonPlan(g,run()).upgrade,final);
+ e.season(run());
+ assert(final.bought);
 });
 
 test('season-triggered pickups stop when the corresponding drops are unlocked',()=>{

@@ -259,7 +259,7 @@ function researchPlan(g,c){
  const upgrade=g.Upgrades?.[name];
  const display=upgrade?.dname||name;
  if(!upgrade?.unlocked||upgrade.bought)return{reason:'等待解锁 '+display,seconds:g.researchT>0?g.researchT/(g.fps||30):undefined};
- if(upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||c.blocked.includes('u:'+upgrade.id))return{reason:'已保护 '+display};
+ if(upgradeProtected(g,c,upgrade))return{reason:'已保护 '+display};
  const cost=upgrade.getPrice?.(),gap=cost+C.reserve(g,c)-g.cookies;
  if(!Number.isFinite(cost)||cost<0)return{reason:'无法核对 '+display+' 的价格'};
  if(gap>0)return{reason:'等待 '+display+' · 缺 '+C.fmt(gap)+' 饼干'};
@@ -463,31 +463,81 @@ function growthAura(g,c){
 function missingDrops(g,drops){
  return (drops||[]).filter(name=>!C.has(g,name)&&!g.HasUnlocked?.(name));
 }
+function upgradeProtected(g,c,upgrade){
+ return upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||c.blocked.includes('u:'+upgrade.id);
+}
 function collectUpgrade(g,c,name,action,waiting){
  const upgrade=g.Upgrades?.[name];
  if(!upgrade?.unlocked)return{reason:waiting};
- if(upgrade.isVaulted?.())return{reason:'保险库保护 · '+(upgrade.dname||name)};
+ if(upgradeProtected(g,c,upgrade))return{reason:'升级受保护 · '+(upgrade.dname||name)};
  const cost=upgrade.getPrice();
  if(!Number.isFinite(cost)||cost<0||g.cookies-cost<C.reserve(g,c)){
   return{reason:'等待购买预算 · '+(upgrade.dname||name)};
  }
  return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||name)};
 }
+const prioritySeasonRewards=["Santa's bottomless bag",'Reindeer baking grounds','Omelette','Season savings','Toy workshop'];
+function seasonRewards(g){
+ const dominion="Santa's dominion";
+ return {
+  christmas:[...(g.santaDrops||[]),...(g.reindeerDrops||[]),...(g.Upgrades?.[dominion]?[dominion]:[])],
+  easter:g.easterEggs||[],
+  halloween:g.halloweenDrops||[],
+  valentines:g.heartDrops||[]
+ };
+}
+function seasonalPurchase(g,c,names){
+ const choices=[];
+ let protectedName='',specialName='';
+ for(const name of new Set(names)){
+  const upgrade=g.Upgrades?.[name];
+  if(!upgrade?.unlocked||upgrade.bought||C.has(g,name))continue;
+  if(upgradeProtected(g,c,upgrade)){
+   protectedName||=upgrade.dname||name;
+   continue;
+  }
+  if(C.upgradeClass(g,upgrade)==='特殊操作'){
+   specialName||=upgrade.dname||name;
+   continue;
+  }
+  const cost=upgrade.getPrice?.();
+  if(!Number.isFinite(cost)||cost<0)continue;
+  const index=prioritySeasonRewards.indexOf(name);
+  choices.push({upgrade,cost,priority:index<0?prioritySeasonRewards.length:index});
+ }
+ choices.sort((a,b)=>a.priority-b.priority||a.cost-b.cost);
+ const budget=g.cookies-C.reserve(g,c);
+ const next=choices.find(choice=>choice.cost<=budget);
+ if(next){
+  const {upgrade,cost}=next;
+  const action=g.heartDrops?.includes(upgrade.name)?'购买情人节饼干':'购买季节奖励';
+  return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||upgrade.name)};
+ }
+ const waiting=choices[0]?.upgrade;
+ if(waiting)return{reason:'等待购买预算 · '+(waiting.dname||waiting.name)};
+ if(protectedName)return{reason:'季节奖励受保护 · '+protectedName};
+ if(specialName)return{reason:'可手动购买的季节奖励 · '+specialName};
+ return null;
+}
 function seasonPlan(g,c){
+ if(['noUpgrade','both'].includes(c.challenge))return{reason:'无升级挑战保护'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓季节采购和切换'};
+ const lists=seasonRewards(g),rewards=seasonalPurchase(g,c,Object.values(lists).flat());
+ if(rewards?.kind)return rewards;
  const groups=[
-  {key:'christmas',missing:missingDrops(g,[...(g.santaDrops||[]),...(g.reindeerDrops||[])])},
-  {key:'easter',missing:missingDrops(g,g.easterEggs)},
-  {key:'halloween',missing:missingDrops(g,g.halloweenDrops)},
-  {key:'valentines',missing:(g.heartDrops||[]).filter(name=>!C.has(g,name))}
+  {key:'christmas',missing:missingDrops(g,lists.christmas)},
+  {key:'easter',missing:missingDrops(g,lists.easter)},
+  {key:'halloween',missing:missingDrops(g,lists.halloween)},
+  {key:'valentines',missing:lists.valentines.filter(name=>!C.has(g,name))}
  ];
  const canWrinkle=!!g.elderWrath||g.wrinklers?.some(w=>w.phase>0);
  const current=groups.find(group=>group.key===g.season&&group.missing.length);
  if(current&&(current.key!=='halloween'||canWrinkle)){
   if(current.key==='valentines'){
    const name=current.missing[0];
-   return collectUpgrade(g,c,name,'购买情人节饼干','等待达到情人节饼干解锁条件 · '+(g.Upgrades?.[name]?.dname||name));
+   return rewards||{reason:'等待达到情人节饼干解锁条件 · '+(g.Upgrades?.[name]?.dname||name)};
   }
-  if(g.season==='christmas'&&current.missing.some(name=>g.santaDrops?.includes(name))){
+  if(g.season==='christmas'&&current.missing.some(name=>name==="Santa's dominion"||g.santaDrops?.includes(name))){
    const next=C.num(g.santaLevel)+1;
    if(!C.has(g,'A festive hat'))return collectUpgrade(g,c,'A festive hat','购买节日帽以培养圣诞老人','等待圣诞节解锁节日帽');
    if(next<=14){
@@ -499,13 +549,13 @@ function seasonPlan(g,c){
   return{reason:'继续收集 '+(g.seasons?.[current.key]?.name||current.key)+' · 缺 '+current.missing.length+' 件掉落'};
  }
  const available=groups.filter(group=>group.missing.length&&g.seasons?.[group.key]);
- if(!available.length)return{reason:'已收集支持的季节掉落'};
+ if(!available.length)return rewards||{reason:'已收集支持的季节掉落'};
  const candidates=available.filter(group=>group.key!=='halloween'||canWrinkle);
  if(!candidates.length)return{reason:'等待老奶奶末日开启，万圣节掉落需要皱纹虫'};
  if(C.num(g.seasonUses)>=c.managed.seasonLimit)return{reason:'本轮季节切换已达 '+c.managed.seasonLimit+' 次上限'};
  for(const group of candidates){
   const season=g.seasons[group.key],upgrade=g.Upgrades?.[season.trigger];
-  if(!upgrade?.unlocked||upgrade.isVaulted?.())continue;
+  if(!upgrade?.unlocked||upgradeProtected(g,c,upgrade))continue;
   const cost=upgrade.getPrice();
   if(!Number.isFinite(cost)||cost<0||g.cookies-cost<C.reserve(g,c))return{reason:'等待 '+season.name+' 切换预算'};
   return{kind:'switch',key:group.key,upgrade,cost,reason:'切换至 '+season.name+' · 缺 '+group.missing.length+' 件掉落'};
@@ -514,6 +564,6 @@ function seasonPlan(g,c){
 }
 
 return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
- marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan,
+ marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonRewards,seasonPlan,
  heavenlyBudget,ascensionPlan,ascensionCombo,ascensionPrep,ascensionPrepCost,permanentSlots,researchPlan};
 });

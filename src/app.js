@@ -33,7 +33,7 @@ const managementModules={
  dragon:{title:'养龙',link:'dragon',modes:[['hatch','孵化与抚摸'],['develop','训练与主光环']],
   scope:'按预算购买龙蛋并训练。龙达到 8 级并解锁抚摸后，尝试集齐龙掉落。'},
  season:{title:'季节收藏',link:'season',modes:[['collection','轮换并收集季节物品']],
-  scope:'圣诞收驯鹿并培养圣诞老人。复活节和万圣节收集随机掉落。情人节按预算逐件购买饼干。独立启用皱纹虫托管时优先按它的方案收取。'},
+  scope:'轮换四个季节、解锁掉落并按预算购买已解锁的普通奖励。优先购买有助于收藏的奖励。独立启用皱纹虫托管时按其方案收取。'},
  wrinklers:{title:'皱纹虫',link:'wrinkler',modes:[['yield','攒收益'],['drops','刷掉落']],
   scope:'按用途等待储量和数量，再回收普通皱纹虫。始终保留闪光个体。'},
  events:{title:'点击与事件',link:'click',modes:[['idle','日常挂机'],['burst','爆发连点']],
@@ -162,9 +162,13 @@ function marketPage(g,c){const data=C.market(g,engine.hist);if(!data)return head
 function growthPage(g,c){
  const dragon=g.dragonLevels?.[g.dragonLevel];
  const wrinklers=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
+ const rewards=M.seasonRewards(g);
  const seasons=Object.entries(g.seasons||{}).map(([key,season])=>{
-  const upgrades=Object.values(g.Upgrades||{}).filter(u=>u.season===key&&u.pool!=='toggle');
-  return '<details class="advanced" data-state="season-'+esc(key)+'"><summary>'+esc(season.name)+' · '+upgrades.filter(u=>u.bought).length+' / '+upgrades.length+
+  const names=new Set(rewards[key]||[]);
+  const upgrades=Object.values(g.Upgrades||{}).filter(u=>names.has(u.name)||u.season===key&&u.pool!=='toggle');
+  const unlocked=upgrades.filter(u=>u.unlocked&&!u.bought).length;
+  return '<details class="advanced" data-state="season-'+esc(key)+'"><summary>'+esc(season.name)+' · 已买 '+upgrades.filter(u=>u.bought).length+' / '+upgrades.length+
+   (unlocked?' · 已解锁待买 '+unlocked:'')+
    '</summary><div class="collection">'+upgrades.map(u=>'<span class="'+(u.bought?'owned':'')+'">'+
    (u.bought?'✓ ':'')+esc(u.dname||u.name)+'</span>').join('')+'</div></details>';
  });

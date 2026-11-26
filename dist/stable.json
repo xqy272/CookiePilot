@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "优化自动转生前的成就预算，联动魔法书等待一次可预测的点击爆发。",
+  "notes": "补齐季节奖励采购，跨季节买入已解锁的普通礼物、节日饼干和复活节蛋。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.0.2/CookiePilot-v3.0.2.zip",
-  "sha256": "86997efed7a415ab0dafb6bbed03f0df3f5af84563550638de1902148d60f182"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.0.3/CookiePilot-v3.0.3.zip",
+  "sha256": "fbf5bdd850e92fbe723291ef993e489727dd007d750086590206a60f1b3edf21"
 }

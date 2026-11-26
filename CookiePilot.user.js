@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cookie Pilot · 饼干领航员
 // @namespace    https://github.com/xqy272/CookiePilot
-// @version      3.0.2
+// @version      3.0.3
 // @description  全流程 Cookie Clicker 中文助手：现代工作台、采购、花园、法术、股市、成长、存档与在线更新。
 // @author       Cookie Pilot contributors
 // @match        https://orteil.dashnet.org/cookieclicker/
@@ -19,11 +19,11 @@
 // @downloadURL  https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js
 // ==/UserScript==
 
-/* Cookie Pilot 3.0.2 · MIT · bundled locally; no remote executable code. */
+/* Cookie Pilot 3.0.3 · MIT · bundled locally; no remote executable code. */
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='3.0.2', SUPPORTED='2.058';
+const VERSION='3.0.3', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const MANAGED_MODES={
  events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield','combo'],pantheon:['lineup'],
@@ -756,7 +756,7 @@ function researchPlan(g,c){
  const upgrade=g.Upgrades?.[name];
  const display=upgrade?.dname||name;
  if(!upgrade?.unlocked||upgrade.bought)return{reason:'等待解锁 '+display,seconds:g.researchT>0?g.researchT/(g.fps||30):undefined};
- if(upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||c.blocked.includes('u:'+upgrade.id))return{reason:'已保护 '+display};
+ if(upgradeProtected(g,c,upgrade))return{reason:'已保护 '+display};
  const cost=upgrade.getPrice?.(),gap=cost+C.reserve(g,c)-g.cookies;
  if(!Number.isFinite(cost)||cost<0)return{reason:'无法核对 '+display+' 的价格'};
  if(gap>0)return{reason:'等待 '+display+' · 缺 '+C.fmt(gap)+' 饼干'};
@@ -960,31 +960,81 @@ function growthAura(g,c){
 function missingDrops(g,drops){
  return (drops||[]).filter(name=>!C.has(g,name)&&!g.HasUnlocked?.(name));
 }
+function upgradeProtected(g,c,upgrade){
+ return upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||c.blocked.includes('u:'+upgrade.id);
+}
 function collectUpgrade(g,c,name,action,waiting){
  const upgrade=g.Upgrades?.[name];
  if(!upgrade?.unlocked)return{reason:waiting};
- if(upgrade.isVaulted?.())return{reason:'保险库保护 · '+(upgrade.dname||name)};
+ if(upgradeProtected(g,c,upgrade))return{reason:'升级受保护 · '+(upgrade.dname||name)};
  const cost=upgrade.getPrice();
  if(!Number.isFinite(cost)||cost<0||g.cookies-cost<C.reserve(g,c)){
   return{reason:'等待购买预算 · '+(upgrade.dname||name)};
  }
  return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||name)};
 }
+const prioritySeasonRewards=["Santa's bottomless bag",'Reindeer baking grounds','Omelette','Season savings','Toy workshop'];
+function seasonRewards(g){
+ const dominion="Santa's dominion";
+ return {
+  christmas:[...(g.santaDrops||[]),...(g.reindeerDrops||[]),...(g.Upgrades?.[dominion]?[dominion]:[])],
+  easter:g.easterEggs||[],
+  halloween:g.halloweenDrops||[],
+  valentines:g.heartDrops||[]
+ };
+}
+function seasonalPurchase(g,c,names){
+ const choices=[];
+ let protectedName='',specialName='';
+ for(const name of new Set(names)){
+  const upgrade=g.Upgrades?.[name];
+  if(!upgrade?.unlocked||upgrade.bought||C.has(g,name))continue;
+  if(upgradeProtected(g,c,upgrade)){
+   protectedName||=upgrade.dname||name;
+   continue;
+  }
+  if(C.upgradeClass(g,upgrade)==='特殊操作'){
+   specialName||=upgrade.dname||name;
+   continue;
+  }
+  const cost=upgrade.getPrice?.();
+  if(!Number.isFinite(cost)||cost<0)continue;
+  const index=prioritySeasonRewards.indexOf(name);
+  choices.push({upgrade,cost,priority:index<0?prioritySeasonRewards.length:index});
+ }
+ choices.sort((a,b)=>a.priority-b.priority||a.cost-b.cost);
+ const budget=g.cookies-C.reserve(g,c);
+ const next=choices.find(choice=>choice.cost<=budget);
+ if(next){
+  const {upgrade,cost}=next;
+  const action=g.heartDrops?.includes(upgrade.name)?'购买情人节饼干':'购买季节奖励';
+  return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||upgrade.name)};
+ }
+ const waiting=choices[0]?.upgrade;
+ if(waiting)return{reason:'等待购买预算 · '+(waiting.dname||waiting.name)};
+ if(protectedName)return{reason:'季节奖励受保护 · '+protectedName};
+ if(specialName)return{reason:'可手动购买的季节奖励 · '+specialName};
+ return null;
+}
 function seasonPlan(g,c){
+ if(['noUpgrade','both'].includes(c.challenge))return{reason:'无升级挑战保护'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓季节采购和切换'};
+ const lists=seasonRewards(g),rewards=seasonalPurchase(g,c,Object.values(lists).flat());
+ if(rewards?.kind)return rewards;
  const groups=[
-  {key:'christmas',missing:missingDrops(g,[...(g.santaDrops||[]),...(g.reindeerDrops||[])])},
-  {key:'easter',missing:missingDrops(g,g.easterEggs)},
-  {key:'halloween',missing:missingDrops(g,g.halloweenDrops)},
-  {key:'valentines',missing:(g.heartDrops||[]).filter(name=>!C.has(g,name))}
+  {key:'christmas',missing:missingDrops(g,lists.christmas)},
+  {key:'easter',missing:missingDrops(g,lists.easter)},
+  {key:'halloween',missing:missingDrops(g,lists.halloween)},
+  {key:'valentines',missing:lists.valentines.filter(name=>!C.has(g,name))}
  ];
  const canWrinkle=!!g.elderWrath||g.wrinklers?.some(w=>w.phase>0);
  const current=groups.find(group=>group.key===g.season&&group.missing.length);
  if(current&&(current.key!=='halloween'||canWrinkle)){
   if(current.key==='valentines'){
    const name=current.missing[0];
-   return collectUpgrade(g,c,name,'购买情人节饼干','等待达到情人节饼干解锁条件 · '+(g.Upgrades?.[name]?.dname||name));
+   return rewards||{reason:'等待达到情人节饼干解锁条件 · '+(g.Upgrades?.[name]?.dname||name)};
   }
-  if(g.season==='christmas'&&current.missing.some(name=>g.santaDrops?.includes(name))){
+  if(g.season==='christmas'&&current.missing.some(name=>name==="Santa's dominion"||g.santaDrops?.includes(name))){
    const next=C.num(g.santaLevel)+1;
    if(!C.has(g,'A festive hat'))return collectUpgrade(g,c,'A festive hat','购买节日帽以培养圣诞老人','等待圣诞节解锁节日帽');
    if(next<=14){
@@ -996,13 +1046,13 @@ function seasonPlan(g,c){
   return{reason:'继续收集 '+(g.seasons?.[current.key]?.name||current.key)+' · 缺 '+current.missing.length+' 件掉落'};
  }
  const available=groups.filter(group=>group.missing.length&&g.seasons?.[group.key]);
- if(!available.length)return{reason:'已收集支持的季节掉落'};
+ if(!available.length)return rewards||{reason:'已收集支持的季节掉落'};
  const candidates=available.filter(group=>group.key!=='halloween'||canWrinkle);
  if(!candidates.length)return{reason:'等待老奶奶末日开启，万圣节掉落需要皱纹虫'};
  if(C.num(g.seasonUses)>=c.managed.seasonLimit)return{reason:'本轮季节切换已达 '+c.managed.seasonLimit+' 次上限'};
  for(const group of candidates){
   const season=g.seasons[group.key],upgrade=g.Upgrades?.[season.trigger];
-  if(!upgrade?.unlocked||upgrade.isVaulted?.())continue;
+  if(!upgrade?.unlocked||upgradeProtected(g,c,upgrade))continue;
   const cost=upgrade.getPrice();
   if(!Number.isFinite(cost)||cost<0||g.cookies-cost<C.reserve(g,c))return{reason:'等待 '+season.name+' 切换预算'};
   return{kind:'switch',key:group.key,upgrade,cost,reason:'切换至 '+season.name+' · 缺 '+group.missing.length+' 件掉落'};
@@ -1011,7 +1061,7 @@ function seasonPlan(g,c){
 }
 
 return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
- marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan,
+ marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonRewards,seasonPlan,
  heavenlyBudget,ascensionPlan,ascensionCombo,ascensionPrep,ascensionPrepCost,permanentSlots,researchPlan};
 });
 
@@ -1240,7 +1290,7 @@ class Engine{
    const g=this.g;
    this.checkMilestones(g);
    if(this.considerAscension(g,now))return;
-    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
+    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['season',this.season],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura]]){
     if(k==='lump'&&C.managesLumps(g,this.c))continue;
     if(k==='harvest'&&M.modes(g,this.c).garden)continue;
     const run=M.execution(g,this.c);
@@ -1900,7 +1950,7 @@ const managementModules={
  dragon:{title:'养龙',link:'dragon',modes:[['hatch','孵化与抚摸'],['develop','训练与主光环']],
   scope:'按预算购买龙蛋并训练。龙达到 8 级并解锁抚摸后，尝试集齐龙掉落。'},
  season:{title:'季节收藏',link:'season',modes:[['collection','轮换并收集季节物品']],
-  scope:'圣诞收驯鹿并培养圣诞老人。复活节和万圣节收集随机掉落。情人节按预算逐件购买饼干。独立启用皱纹虫托管时优先按它的方案收取。'},
+  scope:'轮换四个季节、解锁掉落并按预算购买已解锁的普通奖励。优先购买有助于收藏的奖励。独立启用皱纹虫托管时按其方案收取。'},
  wrinklers:{title:'皱纹虫',link:'wrinkler',modes:[['yield','攒收益'],['drops','刷掉落']],
   scope:'按用途等待储量和数量，再回收普通皱纹虫。始终保留闪光个体。'},
  events:{title:'点击与事件',link:'click',modes:[['idle','日常挂机'],['burst','爆发连点']],
@@ -2029,9 +2079,13 @@ function marketPage(g,c){const data=C.market(g,engine.hist);if(!data)return head
 function growthPage(g,c){
  const dragon=g.dragonLevels?.[g.dragonLevel];
  const wrinklers=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
+ const rewards=M.seasonRewards(g);
  const seasons=Object.entries(g.seasons||{}).map(([key,season])=>{
-  const upgrades=Object.values(g.Upgrades||{}).filter(u=>u.season===key&&u.pool!=='toggle');
-  return '<details class="advanced" data-state="season-'+esc(key)+'"><summary>'+esc(season.name)+' · '+upgrades.filter(u=>u.bought).length+' / '+upgrades.length+
+  const names=new Set(rewards[key]||[]);
+  const upgrades=Object.values(g.Upgrades||{}).filter(u=>names.has(u.name)||u.season===key&&u.pool!=='toggle');
+  const unlocked=upgrades.filter(u=>u.unlocked&&!u.bought).length;
+  return '<details class="advanced" data-state="season-'+esc(key)+'"><summary>'+esc(season.name)+' · 已买 '+upgrades.filter(u=>u.bought).length+' / '+upgrades.length+
+   (unlocked?' · 已解锁待买 '+unlocked:'')+
    '</summary><div class="collection">'+upgrades.map(u=>'<span class="'+(u.bought?'owned':'')+'">'+
    (u.bought?'✓ ':'')+esc(u.dname||u.name)+'</span>').join('')+'</div></details>';
  });
