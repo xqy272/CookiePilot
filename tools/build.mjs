@@ -35,7 +35,7 @@ const header=`// ==UserScript==
 `;
 const userscript=header+'\n'+code;
 await write(`dist/${channel}.user.js`,userscript);await write(`dist/${channel}.meta.js`,header);await write('CookiePilot.user.js',userscript);await write('extension/pilot.bundle.js',code);
-await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'补齐季节奖励采购，跨季节买入已解锁的普通礼物、节日饼干和复活节蛋。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
+await write(`dist/${channel}.json`,JSON.stringify({schema:1,version,channel,gameVersions:['2.058'],notes:'补齐龙掉落采购、万圣节研究衔接、花园全周期、股市办公室与经纪人，以及可授权的转生爆发贷款。',userscript:`${root}/${channel}.user.js`,zip:`https://github.com/xqy272/CookiePilot/releases/download/v${version}/CookiePilot-v${version}.zip`,sha256:crypto.createHash('sha256').update(userscript).digest('hex')},null,2));
 if(channel==='stable'){
   let mirror=false;try{const prior=JSON.parse(await read('dist/beta.json'));mirror=prior.version===version;}catch{mirror=true;}
   if(mirror){

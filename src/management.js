@@ -34,6 +34,7 @@ function seasonActivity(g,rule){
 }
 function wrinklerMode(g,c){
  const m=modes(g,c);
+ if(m.research==='seasonal'&&m.season&&seasonActivity(g,'wrinkler'))return'drops';
  return m.wrinklers||(m.season&&seasonActivity(g,'wrinkler')?'drops':'');
 }
 function execution(g,c){
@@ -46,7 +47,7 @@ function execution(g,c){
   ...(m.magic?{cast:true}:{}),
   ...(m.pantheon?{pantheon:true,gods:c.managed.gods||[-1,-1,-1]}:{}),
   ...(m.market?{trade:true,marketThresholds:{}}:{}),
-  ...(m.dragon?{dragon:true,pet:true,aura:m.dragon==='develop'}:{}),
+  ...(m.dragon?{dragon:true,pet:true,aura:m.dragon==='develop'||c.aura}:{}),
   ...(m.season?{season:true,deer:seasonActivity(g,'deer')||!!m.events||c.deer,
    golden:seasonActivity(g,'golden')||!!m.events||c.golden}:{}),
   ...(wrinklerMode(g,c)?{wrinkler:true,protectShiny:true}:{})
@@ -72,6 +73,16 @@ function purchasePlan(g,c,options={}){
    const plan=C.purchasePlan(g,{...c,bulk:1,purchaseMode:'target',target:id},
     {bridgedTarget:options.bridgedTarget});
    if(plan.next||Number.isFinite(plan.seconds)&&plan.seconds<=120)return{...plan,unlock:item.feature};
+  }
+  const office=managed.market==='development'&&officeTarget(g,c);
+  const dragon=managed.dragon&&dragonTrainingTarget(g,c,managed.dragon);
+  for(const item of [office,dragon]){
+   if(!item||item.object.amount>=item.target||item.object.locked)continue;
+   const id='b:'+item.object.id;
+   if(c.blocked.includes(id))continue;
+   const bulk=Math.min(c.bulk,item.target-item.object.amount);
+   const plan=C.purchasePlan(g,{...c,bulk,purchaseMode:'target',target:id});
+   if(plan.next||Number.isFinite(plan.seconds)&&plan.seconds<=120)return{...plan,unlock:item.label};
   }
   const plan=C.purchasePlan(g,c,options);
   if(!plan.next&&c.bulk>1&&g.BuildingsOwned<20){
@@ -237,12 +248,19 @@ function permanentSlots(g){
 
 const researchChain=['Bingo center/Research facility','Specialized chocolate chips','Designer cocoa beans',
  'Ritual rolling pins','Underworld ovens','One mind','Exotic nuts','Communal brainsweep','Arcane sugar','Elder Pact'];
+function halloweenResearchNeeded(g,c){
+ if(!modes(g,c).season||!missingDrops(g,g.halloweenDrops).length||C.has(g,'Elder Covenant'))return false;
+ const trigger=g.Upgrades?.[g.seasons?.halloween?.trigger];
+ return g.season==='halloween'||!!trigger?.unlocked&&!upgradeProtected(g,c,trigger)&&
+  C.num(g.seasonUses)<c.managed.seasonLimit;
+}
 function researchPlan(g,c){
  const mode=modes(g,c).research;
  if(!mode)return{reason:'研究托管已关闭'};
  if(g.ascensionMode===1||['noUpgrade','both'].includes(c.challenge))return{reason:'挑战保护：暂停研究采购'};
  if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓研究采购'};
- const length=mode==='safe'?5:mode==='one-mind'?6:researchChain.length;
+ const length=mode==='seasonal'?(halloweenResearchNeeded(g,c)?6:5):
+  mode==='safe'?5:mode==='one-mind'?6:researchChain.length;
  let name=researchChain.slice(0,length).find(key=>!C.has(g,key));
  if(!name&&mode==='pledge'){
   if(!g.elderWrath||g.pledgeT>0)return{reason:'安抚生效，等待老太婆恢复愤怒'};
@@ -255,7 +273,7 @@ function researchPlan(g,c){
   }
   name='Elder Pledge';
  }
- if(!name)return{reason:'已完成设定的研究阶段'};
+ if(!name)return{reason:mode==='seasonal'&&!C.has(g,'One mind')?'前置研究已完成，等待万圣节收藏条件':'已完成设定的研究阶段'};
  const upgrade=g.Upgrades?.[name];
  const display=upgrade?.dname||name;
  if(!upgrade?.unlocked||upgrade.bought)return{reason:'等待解锁 '+display,seconds:g.researchT>0?g.researchT/(g.fps||30):undefined};
@@ -351,11 +369,77 @@ function breedLayout(info,protectedTiles){
  return{empty,best};
 }
 
+const gardenDrops=[
+ ['bakerWheat','Wheat slims'],['elderwort','Elderwort biscuits'],['bakeberry','Bakeberry cookies'],
+ ['duketater','Duketater cookies'],['greenRot','Green yeast digestives'],['drowsyfern','Fern tea'],['ichorpuff','Ichor syrup']
+];
+const gardenCrops=[
+ ['bakeberry',1800,.03],['queenbeet',3600,.04],['duketater',7200,.08],
+ ['chocoroot',180,.03],['whiteChocoroot',180,.03]
+];
+function gardenSoil(g,c,info,key){
+ const {m}=info,soil=m.soils?.[key];
+ if(!c.gardenAutoSoil||!soil||m.soil===soil.id||m.nextSoil>Date.now()||
+    (m.parent?.amount??g.Objects?.Farm?.amount??0)<soil.req||c.protectedTiles.length||
+    c.holdCombo&&C.clickBuff(g))return null;
+ return{kind:'soil',soil,seconds:0,reason:'切换土壤 · '+soil.name};
+}
+function gardenCycle(g,c,info){
+ const {m,cells}=info;
+ const relevant=cells.filter(tile=>tile.unlocked&&!c.protectedTiles.includes(tile.key));
+ const pending=gardenDrops.filter(([key,name])=>m.plants[key]?.unlocked&&g.Upgrades?.[name]&&
+  !upgradeProtected(g,c,g.Upgrades[name])&&!C.has(g,name)&&!g.HasUnlocked?.(name));
+ const reward=rewardPurchase(g,c,gardenDrops.map(([,name])=>name),'购买花园奖励');
+ if(reward?.kind&&!(c.holdCombo&&C.clickBuff(g))&&!['noUpgrade','both'].includes(c.challenge))return reward;
+ const dirt=gardenSoil(g,c,info,'fertilizer');
+ const keep=C.reserve(g,c),budget=Math.max(0,g.cookies-keep)*c.gardenSpend/100;
+ const base=Math.max(0,C.num(g.unbuffedCps,g.cookiesPs));
+ const growing=relevant.filter(tile=>tile.p);
+ const outstanding=new Set(pending.map(([key])=>key));
+ const hasDrop=growing.some(tile=>outstanding.has(tile.p.key));
+ const ready=growing.find(tile=>tile.mature&&outstanding.has(tile.p.key));
+ if(ready)return{kind:'harvest',tile:ready,seconds:0,reason:'收获以寻找花园掉落 · '+ready.p.name};
+ const cashCrops=gardenCrops.filter(([key])=>c.gardenCrop==='auto'||key===c.gardenCrop);
+ const eligible=cashCrops.map(([key,seconds,bank])=>{
+  const plant=m.plants[key];
+  if(!plant?.unlocked||!plant.plantable)return null;
+  const cost=m.getCost(plant);
+  const gain=Math.min(g.cookies*bank,base*Math.max(1,c.harvestBuff)*seconds);
+  const growth=plant.mature/Math.max(.001,plant.ageTick+plant.ageTickR/2);
+  return{plant,score:(gain-cost)/growth,cost};
+ }).filter(Boolean).sort((a,b)=>b.score-a.score);
+ let target=growing.find(tile=>outstanding.has(tile.p.key))?.p;
+ if(!target&&pending.length)target=m.plants[pending[0][0]];
+ const cashNames=new Set(cashCrops.map(([key])=>key));
+ const nearWilt=({x,y,age,p})=>!p.immortal&&age+Math.ceil((p.ageTick+p.ageTickR)*
+  C.num(m.plotBoost?.[y]?.[x]?.[0],1)*(1+.05*C.aura(g,'Supreme Intellect')))>=100;
+ const payout=growing.find(tile=>tile.mature&&cashNames.has(tile.p.key)&&
+  (C.cpsBuff(g)>=c.harvestBuff||nearWilt(tile)));
+ if(payout)return{kind:'harvest',tile:payout,seconds:0,reason:'收获饼干 · '+payout.p.name};
+ const planted=growing.find(tile=>cashNames.has(tile.p.key));
+ const choice=eligible.find(row=>row.score>0&&row.cost<=budget);
+ target??=planted?.p||choice?.plant;
+ if(!target)return reward||{reason:'等待可按预算种植并回本的作物'};
+ if(c.holdCombo&&(C.clickBuff(g)||C.cpsBuff(g)>1))return{reason:'等待临时增益结束后按基础价格种植'};
+ if(dirt)return dirt;
+ const crop=growing.filter(tile=>tile.p===target);
+ const empty=relevant.find(tile=>!tile.p);
+ const cost=m.getCost(target);
+ if(empty&&Number.isFinite(cost)&&cost>=0&&cost*(crop.length+1)<=budget){
+  return{kind:'plant',tile:{...empty,plant:target,cost},keep,cost,seconds:0,reason:'种植 '+target.name+(hasDrop||pending.length?' · 收集掉落':' · 收获饼干')};
+ }
+ if(crop.length){
+  const next=Math.min(...crop.map(tile=>tile.mature?tile.death:tile.eta));
+  return{kind:'wait',seconds:Math.max(info.next,next),reason:'等待 '+target.name+(crop.some(tile=>tile.mature)?' 的收获时机':' 成熟')};
+ }
+ return{reason:empty?'等待 '+target.name+' 种植预算':'等待空白地块'};
+}
 function gardenPlan(g,c,info=C.garden(g)){
  if(!info)return{reason:'农场升至 1 级解锁花园'};
  const {m,cells}=info;
  if(m.freeze)return{reason:'花园已冻结'};
- if(Object.values(m.plants).every(plant=>plant.unlocked))return{reason:'种子已收齐'};
+ const cycle=modes(g,c).garden==='cycle';
+ if(Object.values(m.plants).every(plant=>plant.unlocked))return cycle?gardenCycle(g,c,info):{reason:'种子已收齐'};
  const visible=cells.filter(tile=>tile.unlocked&&tile.p&&!c.protectedTiles.includes(tile.key));
  const spores=['brownMold','crumbspore'].filter(key=>m.plants[key]&&!m.plants[key].unlocked);
  const crop=visible.filter(tile=>!tile.p.unlocked||spores.length&&tile.p.key==='meddleweed')
@@ -363,6 +447,11 @@ function gardenPlan(g,c,info=C.garden(g)){
  if(crop)return crop.mature?{kind:'harvest',tile:crop,seconds:0,reason:'收获 '+C.tileName(crop)+' '+crop.p.name}:
   {kind:'wait',seconds:Math.max(info.next,crop.eta),reason:'等待 '+C.tileName(crop)+' '+crop.p.name+' 成熟'};
  const {empty,best}=breedLayout(info,c.protectedTiles);
+ if(cycle){
+  const key=best&&!best.missing.length&&best.eta<=info.next?'woodchips':'fertilizer';
+  const soil=gardenSoil(g,c,info,key);
+  if(soil)return soil;
+ }
  const weed=m.plants.meddleweed;
  const wild=weed&&!weed.unlocked&&empty.some(tile=>!cells.some(neighbor=>neighbor.p&&neighbor.unlocked&&
   Math.abs(neighbor.x-tile.x)<=1&&Math.abs(neighbor.y-tile.y)<=1));
@@ -389,6 +478,69 @@ function gardenPlan(g,c,info=C.garden(g)){
  return{kind:'plant',tile,keep,seconds:0,reason:target,cost:best.cost};
 }
 
+function officeTarget(g,c,m=C.mini(g,'Bank')){
+ const object=g.Objects?.Cursor,office=m?.offices?.[m.officeLevel];
+ if(!object||!Array.isArray(office?.cost)||m.officeLevel+1>=c.marketOfficeCap)return null;
+ const [quantity,level]=office.cost;
+ if(!Number.isInteger(quantity)||quantity<1||!Number.isInteger(level))return null;
+ return{object,office,quantity,level,target:quantity+c.marketCursorKeep,label:'股市办公室'};
+}
+function marketDevelopment(g,c){
+ if(modes(g,c).market!=='development')return{};
+ if(['noUpgrade','both'].includes(c.challenge))return{reason:'无升级挑战保护：暂缓股市发展'};
+ const m=C.mini(g,'Bank');
+ if(!m)return{reason:'银行升至 1 级解锁股市'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓办公室和经纪人'};
+ const office=officeTarget(g,c,m);
+ let priority='';
+ if(office){
+  const {object,target,level,quantity}=office;
+  if(object.level>=level&&object.amount>=target&&!c.blocked.includes('b:'+object.id)){
+   return{kind:'office',m,quantity,reason:'升级股市办公室 · 消耗 '+quantity+' 个指针 · 保留 '+c.marketCursorKeep+' 个'};
+  }
+  priority=c.blocked.includes('b:'+object.id)?'指针受保护，暂缓升级办公室':
+   '办公室需要 '+level+' 级指针、'+target+' 个指针';
+ }
+ const cap=Math.min(c.marketBrokerCap,m.getMaxBrokers?.()??0);
+ if(m.brokers<cap){
+  const cost=m.getBrokerPrice?.();
+  const available=Math.max(0,g.cookies-C.reserve(g,c));
+  if(Number.isFinite(cost)&&cost>=0&&cost<=available*c.marketBudget/100){
+   return{kind:'broker',m,cost,reason:'雇佣经纪人 · '+m.brokers+' / '+cap};
+  }
+  return{reason:priority||'等待经纪人预算'};
+ }
+ return{reason:priority};
+}
+function marketLoanPlan(g,c,job,clickRate){
+ const activeModes=modes(g,c);
+ if(activeModes.market!=='development'||activeModes.ascension!=='cycle'||!activeModes.magic||
+    !c.marketLoan||c.marketLoanSave!==g.fullDate||c.challenge!=='none'||!c.click||!c.ascendCombo||
+    C.veil(g,c)||g.ascensionMode||g.nextAscensionMode||g.recalculateGains||
+    job?.phase!=='prepare'||job.round!==[g.fullDate,g.startDate,g.seed].join(':')||
+    !job.combo?.triggered||job.loanUsed)return null;
+ if(c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return null;
+ const budget=heavenlyBudget(g,job.names),gained=C.prestige(g);
+ if(budget.error||gained<Math.max(job.target,c.ascendTarget)||gained+C.num(g.heavenlyChips)<budget.cost)return null;
+ const m=C.mini(g,'Bank'),id=c.marketLoan,book=C.mini(g,'Wizard tower');
+ const loan=m?.loanTypes?.[id-1],minOffice=[2,4,5][id-1];
+ if(!loan||m.officeLevel<minOffice||book?.spellsCastTotal!==job.combo.index+1||typeof m.takeLoan!=='function')return null;
+ if(Object.values(g.buffs||{}).some(buff=>/^Loan [1-3](?: \(interest\))?$/.test(buff.name||'')))return null;
+ const active=Object.values(g.buffs||{}).find(buff=>buff.name==='Click frenzy'&&buff.multClick>1);
+ if(!active||C.cpsBuff(g)<7)return null;
+ const fps=C.num(g.fps,30)||30;
+ const frenzy=Object.values(g.buffs||{}).filter(buff=>buff.multCpS>1&&Number.isFinite(buff.time));
+ const seconds=Math.min(active.time/fps,...frenzy.map(buff=>buff.time/fps));
+ const [,multiplier,duration,,,fraction]=loan;
+ const additional=C.num(g.cookiesPs)*(multiplier-1),cost=g.cookies*fraction;
+ if(!Number.isFinite(cost)||cost<=0||g.cookies-cost<C.reserve(g,c,additional)||!Number.isFinite(seconds)||
+    seconds<2||duration*60<seconds+job.prep.length+15||!(clickRate>0))return null;
+ const passive=additional*(1-C.clamp(g.cpsSucked,0,1));
+ const clicks=C.num(g.computedMouseCps)*C.productionClickShare(g)*(multiplier-1)*Math.min(c.rate,clickRate);
+ const projected=(passive+clicks)*seconds;
+ if(!Number.isFinite(projected)||projected<cost*1.5)return null;
+ return{kind:'loan',m,id,cost,reason:'领取贷款 '+id+' · 叠加本次转生爆发'};
+}
 function marketOrder(g,c,hist,ledger){
  const data=C.market(g,hist);
  if(!data)return{reason:'银行升至 1 级解锁股市'};
@@ -437,19 +589,49 @@ function wrinklerPlan(g,c,managed=''){
  if(managed==='drops'&&target.sucked<=0)return{reason:'等待普通皱纹虫开始储存饼干'};
  return{target,value};
 }
+const dragonRewards=['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear'];
+function dragonCap(g,c,mode){
+ const collectCap=C.has(g,'Pet the dragon')?8:5;
+ return Math.min(c.dragonMax,g.dragonLevels.length-1,mode==='hatch'?5:mode==='collect'?collectCap:Infinity);
+}
+function dragonTrainingTarget(g,c,mode){
+ const level=g.dragonLevel,levels=g.dragonLevels;
+ if(!levels||level<5||level>=dragonCap(g,c,mode))return null;
+ const stock=mode==='collect'?101:100;
+ if(level<levels.length-3){
+  const object=g.ObjectsById?.[level-5];
+  return object?{object,target:stock,label:'养龙训练'}:null;
+ }
+ const target=level===levels.length-3?50:200;
+ const object=g.ObjectsById?.find(item=>item.amount<target&&!item.locked&&!c.blocked.includes('b:'+item.id));
+ return object?{object,target,label:'养龙训练'}:null;
+}
 function dragonPlan(g,c,mode){
  if(!C.has(g,'A crumbly egg')){
   return mode?collectUpgrade(g,c,'A crumbly egg','购买龙蛋','等待龙蛋解锁'):{reason:'等待获得龙蛋'};
  }
- const current=g.dragonLevel,cap=Math.min(c.dragonMax,g.dragonLevels.length-1,mode==='hatch'?5:Infinity);
- if(current>=cap)return{reason:'已达到训练目标 '+cap+' 级'};
+ const reward=mode?rewardPurchase(g,c,dragonRewards,'购买龙掉落',['Dragon teddy bear','Dragon claw','Dragon scale','Dragon fang']):null;
+ if(reward?.kind&&!(c.holdCombo&&C.clickBuff(g)))return reward;
+ const current=g.dragonLevel,cap=dragonCap(g,c,mode);
+ if(current>=cap)return reward||{reason:mode==='collect'&&!C.has(g,'Pet the dragon')?
+  '已孵化 · 等待天堂升级「抚摸龙」':'已达到训练目标 '+cap+' 级'};
+ if(mode&&c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓养龙'};
+ const material=mode&&dragonTrainingTarget(g,c,mode);
+ if(mode==='collect'&&material&&material.object.amount<material.target){
+  return{reason:'训练需要 '+material.target+' 个'+(material.object.dname||material.object.name)+'，保留 1 个'};
+ }
  const step=g.dragonLevels[current],cost=current<5?1000000*2**current:0;
  if(cost&&g.cookies-cost<C.reserve(g,c))return{reason:'训练受到饼干保留线限制'};
  if(!step?.cost?.())return{reason:'等待材料 · '+C.plain(step?.costStr?.())};
  return{kind:'train',current,cap,step,reason:'训练至 '+(current+1)+' 级 · '+C.plain(step.costStr?.())};
 }
 function dragonDrops(g){
- return missingDrops(g,['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear']);
+ return missingDrops(g,dragonRewards);
+}
+function dragonRewardStatus(g){
+ const unlocked=dragonRewards.filter(name=>!C.has(g,name)&&g.HasUnlocked?.(name)).length;
+ const missing=dragonDrops(g).length;
+ return {missing,unlocked,bought:dragonRewards.length-missing-unlocked};
 }
 function growthAura(g,c){
  if(g.dragonAura||g.dragonLevel<Math.min(c.dragonMax,g.dragonLevels.length-1))return null;
@@ -486,7 +668,7 @@ function seasonRewards(g){
   valentines:g.heartDrops||[]
  };
 }
-function seasonalPurchase(g,c,names){
+function rewardPurchase(g,c,names,label,priorities=[]){
  const choices=[];
  let protectedName='',specialName='';
  for(const name of new Set(names)){
@@ -502,27 +684,28 @@ function seasonalPurchase(g,c,names){
   }
   const cost=upgrade.getPrice?.();
   if(!Number.isFinite(cost)||cost<0)continue;
-  const index=prioritySeasonRewards.indexOf(name);
-  choices.push({upgrade,cost,priority:index<0?prioritySeasonRewards.length:index});
+  const index=priorities.indexOf(name);
+  choices.push({upgrade,cost,priority:index<0?priorities.length:index});
  }
  choices.sort((a,b)=>a.priority-b.priority||a.cost-b.cost);
  const budget=g.cookies-C.reserve(g,c);
  const next=choices.find(choice=>choice.cost<=budget);
  if(next){
   const {upgrade,cost}=next;
-  const action=g.heartDrops?.includes(upgrade.name)?'购买情人节饼干':'购买季节奖励';
+  const action=typeof label==='function'?label(upgrade):label;
   return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||upgrade.name)};
  }
  const waiting=choices[0]?.upgrade;
  if(waiting)return{reason:'等待购买预算 · '+(waiting.dname||waiting.name)};
- if(protectedName)return{reason:'季节奖励受保护 · '+protectedName};
- if(specialName)return{reason:'可手动购买的季节奖励 · '+specialName};
+ if(protectedName)return{reason:'奖励受保护 · '+protectedName};
+ if(specialName)return{reason:'可手动购买的奖励 · '+specialName};
  return null;
 }
 function seasonPlan(g,c){
  if(['noUpgrade','both'].includes(c.challenge))return{reason:'无升级挑战保护'};
  if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓季节采购和切换'};
- const lists=seasonRewards(g),rewards=seasonalPurchase(g,c,Object.values(lists).flat());
+ const lists=seasonRewards(g),rewards=rewardPurchase(g,c,Object.values(lists).flat(),upgrade=>
+  g.heartDrops?.includes(upgrade.name)?'购买情人节饼干':'购买季节奖励',prioritySeasonRewards);
  if(rewards?.kind)return rewards;
  const groups=[
   {key:'christmas',missing:missingDrops(g,lists.christmas)},
@@ -551,7 +734,8 @@ function seasonPlan(g,c){
  const available=groups.filter(group=>group.missing.length&&g.seasons?.[group.key]);
  if(!available.length)return rewards||{reason:'已收集支持的季节掉落'};
  const candidates=available.filter(group=>group.key!=='halloween'||canWrinkle);
- if(!candidates.length)return{reason:'等待老奶奶末日开启，万圣节掉落需要皱纹虫'};
+ if(!candidates.length)return{reason:C.has(g,'Elder Covenant')?'万圣节掉落需要皱纹虫 · 当前长者盟约阻止其出现':
+  '万圣节掉落需要皱纹虫 · 授权研究至「一心」或手动开启老太婆末日'};
  if(C.num(g.seasonUses)>=c.managed.seasonLimit)return{reason:'本轮季节切换已达 '+c.managed.seasonLimit+' 次上限'};
  for(const group of candidates){
   const season=g.seasons[group.key],upgrade=g.Upgrades?.[season.trigger];
@@ -564,6 +748,7 @@ function seasonPlan(g,c){
 }
 
 return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
- marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonRewards,seasonPlan,
+ marketOrder,marketDevelopment,marketLoanPlan,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,dragonRewardStatus,
+ growthAura,seasonRewards,seasonPlan,halloweenResearchNeeded,
  heavenlyBudget,ascensionPlan,ascensionCombo,ascensionPrep,ascensionPrepCost,permanentSlots,researchPlan};
 });

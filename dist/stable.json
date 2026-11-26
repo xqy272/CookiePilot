@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "3.0.3",
+  "version": "3.1.0",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "补齐季节奖励采购，跨季节买入已解锁的普通礼物、节日饼干和复活节蛋。",
+  "notes": "补齐龙掉落采购、万圣节研究衔接、花园全周期、股市办公室与经纪人，以及可授权的转生爆发贷款。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.0.3/CookiePilot-v3.0.3.zip",
-  "sha256": "fbf5bdd850e92fbe723291ef993e489727dd007d750086590206a60f1b3edf21"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.1.0/CookiePilot-v3.1.0.zip",
+  "sha256": "b0dbd7e22f4df4b2613a884dd056bfcbf473fc7996890087e84ea4c99632d62e"
 }

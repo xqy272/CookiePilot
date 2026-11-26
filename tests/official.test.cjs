@@ -6,6 +6,75 @@ const section=(s,a,b)=>{const start=s.indexOf(a),end=s.indexOf(b,start);assert(s
 const memory=()=>{const map=new Map();return{getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};};
 function context(g,m){const node={style:{},setAttribute(){},classList:{add(){},remove(){}},getBounds:()=>({left:0,right:10,top:0,bottom:10})};const ctx=vm.createContext({Game:g,M:m,EN:true,loc:s=>s,Beautify:String,LBeautify:String,l:()=>node,PlaySound(){},triggerAnim(){},console,document:{},Date});vm.runInContext('function choose(a){return a[Math.floor(Math.random()*a.length)]}',ctx);return ctx;}
 const rngSource=section(main,'(function(a,b,c,d,e,f){','\n\nfunction bind');
+test('growth actions trigger the original 2.058 office, broker and loan handlers',()=>{
+ const g=make(),m=g.Objects.Bank.minigame,ctx=context(g,m);
+ const handlers={};
+ ctx.l=id=>({id});
+ ctx.AddEvent=(node,event,fn)=>{if(event==='click')handlers[node.id]=fn;};
+ g.SparkleOn=()=>{};
+ const cursor=g.Objects.Cursor;
+ cursor.amount=125;
+ cursor.level=2;
+ m.officeLevel=0;
+ m.offices=[{cost:[100,2]},{cost:[200,4]},{cost:[350,8]}];
+ m.brokers=0;
+ vm.runInContext(section(market,'M.getMaxBrokers=function','M.brokersTooltip=function'),ctx);
+ vm.runInContext(section(market,"AddEvent(l('bankOfficeUpgrade')","AddEvent(l('bankLoan1')"),ctx);
+ const engine=new Engine(()=>g,memory(),{nativeClick:id=>{handlers[id]({target:{}});return true;}});
+ engine.locked=true;
+ engine.set({marketBudget:25,marketBrokerCap:1,marketOfficeCap:2,managed:{saveId:g.fullDate,modes:{market:'development'}}});
+ engine.trade(M.execution(g,engine.c));
+ assert.equal(m.officeLevel,1);
+ assert.equal(cursor.amount,25);
+ const before=g.cookies;
+ engine.trade(M.execution(g,engine.c));
+ assert.equal(m.brokers,1);
+ assert.equal(before-g.cookies,m.getBrokerPrice());
+ m.loanTypes=[['Loan 1',1.5,120,.25,240,.2]];
+ g.gainBuff=(name,time,multCpS)=>{g.buffs['Loan 1']={name:'Loan 1',time,multCpS};};
+ vm.runInContext(section(market,'M.takeLoan=function','Game.takeLoan=M.takeLoan;'),ctx);
+ m.officeLevel=2;
+ g.buffs.Frenzy={name:'Frenzy',time:3000,multCpS:7};
+ g.cookiesEarned=8e12;
+ g.recalculateGains=0;
+ g.wrinklers=[];
+ g.buffs['Click frenzy']={name:'Click frenzy',time:750,multClick:777};
+ g.computedMouseCps=3e9;
+ g.owned.add('Plastic mouse');
+ const book=g.Objects['Wizard tower'].minigame;
+ const job={saveId:g.fullDate,round:[g.fullDate,g.startDate,g.seed].join(':'),name:'测试',phase:'prepare',
+  target:1,prep:[],names:[],combo:{index:book.spellsCastTotal-1,until:Date.now()+30000,triggered:true}};
+ engine.saveAscent(g,job);
+ engine.clickSample.rate=20;
+ engine.set({marketLoan:1,marketLoanSave:g.fullDate,ascendTarget:1,managed:{...engine.c.managed,
+  modes:{...engine.c.managed.modes,events:'idle',ascension:'cycle',magic:'combo'}}});
+ const bank=g.cookies;
+ assert.equal(M.marketLoanPlan(g,M.execution(g,engine.c),engine.ascentJob(),20)?.kind,'loan');
+ engine.trade(M.execution(g,engine.c));
+ assert.equal(g.cookies,bank*.8);
+ assert.equal(g.buffs['Loan 1'].multCpS,1.5);
+});
+test('garden growth calls the original soil action and preserves its cooldown',()=>{
+ const g=make(),m=g.Objects.Farm.minigame,ctx=context(g,m);
+ const handlers={};
+ ctx.l=id=>({id,classList:{add(){},remove(){}}});
+ ctx.AddEvent=(node,event,callback)=>{if(event==='click')handlers[node.id]=callback;};
+ m.soils={dirt:{id:0,key:'dirt',tick:5,name:'Dirt',req:0},
+  fertilizer:{id:1,key:'fertilizer',tick:3,name:'Fertilizer',req:50}};
+ m.soilsById=Object.values(m.soils);
+ m.computeStepT=()=>{m.stepT=m.soilsById[m.soil].tick*60;};
+ m.nextSoil=0;
+ vm.runInContext(section(garden,"AddEvent(l('gardenSoil-'+me.id),'click'", "\n\t\t\t\tAddEvent(l('gardenSoil-'+me.id),'mouseover'").replace(
+  "AddEvent(l('gardenSoil-'+me.id),'click'","var me=M.soils.fertilizer; AddEvent(l('gardenSoil-'+me.id),'click'"),ctx);
+ const engine=new Engine(()=>g,memory(),{nativeClick:id=>{handlers[id]();return true;}});
+ engine.locked=true;
+ engine.set({managed:{saveId:g.fullDate,modes:{garden:'cycle'}}});
+ m.plot[4][3]=[0,0];
+ engine.plant(M.execution(g,engine.c));
+ assert.equal(m.soil,1);
+ assert.equal(m.stepT,180);
+ assert(m.nextSoil>Date.now());
+});
 test('automatic first ascension uses the official prices, prestige arithmetic, purchase API and slot dialog',()=>{
  const g=make('ascension'),ctx=context(g,null),data=new Map();
  assert.match(main,/Game\.UpgradesById\s*=\s*\{\}/);

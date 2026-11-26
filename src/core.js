@@ -1,12 +1,12 @@
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='3.0.3', SUPPORTED='2.058';
+const VERSION='3.1.0', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const MANAGED_MODES={
- events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield','combo'],pantheon:['lineup'],
- market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],
- research:['safe','one-mind','full','pledge'],ascension:['notice','cycle']
+ events:['idle','burst'],purchase:['efficient'],garden:['seeds','cycle'],magic:['yield','combo'],pantheon:['lineup'],
+ market:['portfolio','development'],dragon:['hatch','collect','develop'],season:['collection'],wrinklers:['yield','drops'],
+ research:['safe','seasonal','one-mind','full','pledge'],ascension:['notice','cycle']
 };
 const LUMP_BAKING_CAP=100;
 const LUMP_UNLOCKS=[
@@ -18,8 +18,10 @@ const LUMP_UNLOCKS=[
 const FARM_TILES=[4,6,9,12,16,20,25,30,36];
 const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',open:false,background:false,remember:false,ads:true,protectVeil:true,alerts:true,sound:false,rate:20,clickMode:'always',reserveMode:'none',reserve:0,holdCombo:true,purchaseMode:'efficient',bridgePurchase:false,target:'',blocked:[],maxBuilding:10000,bulk:1,
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
+ gardenAutoSoil:true,gardenCrop:'auto',
 spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,comboWait:240,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
+ marketOfficeCap:2,marketCursorKeep:25,marketBrokerCap:3,marketLoan:0,marketLoanSave:0,
 lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,lumpManagedSave:0,lumpManagedMode:'growth',
 wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
 godzamokBuildings:[],godzamokKeep:1,godzamokSell:100,seasonTarget:'',ascendTarget:365,heavenlyTarget:'',ascendCombo:true,
@@ -38,6 +40,11 @@ function config(input={},startup=false){
  for(const k of ['rate','maxBuilding','bulk','marketCap','marketMinSamples','wrinklerKeep','dragonMax','aura0','aura1','swapReserve','godzamokKeep','godzamokSell'])c[k]=Math.floor(c[k]);
  c.lumpReserve=Math.ceil(c.lumpReserve);
  c.comboWait=Math.round(clamp(input.comboWait,30,1800,c.comboWait));
+ for(const [key,[low,high]] of Object.entries({marketOfficeCap:[1,6],marketCursorKeep:[1,1000],marketBrokerCap:[0,100],marketLoan:[0,3]})){
+  c[key]=Math.floor(clamp(input[key],low,high,c[key]));
+ }
+ if(['auto','bakeberry','queenbeet','duketater','chocoroot','whiteChocoroot'].includes(input.gardenCrop))c.gardenCrop=input.gardenCrop;
+ if(Number.isSafeInteger(input.marketLoanSave)&&input.marketLoanSave>0)c.marketLoanSave=input.marketLoanSave;
  c.lumpGoal=lumpGoal(input.lumpGoal);
  if(!c.lumpGoal?.saveId)c.lumpLevel=false;
  if(Number.isSafeInteger(input.lumpManagedSave)&&input.lumpManagedSave>0)c.lumpManagedSave=input.lumpManagedSave;
@@ -105,6 +112,21 @@ const plain=s=>String(s||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 const kittens={'Kitten helpers':.1,'Kitten workers':.125,'Kitten engineers':.15,'Kitten overseers':.175,'Kitten managers':.2,'Kitten accountants':.2,'Kitten specialists':.2,'Kitten experts':.2,'Kitten consultants':.2,'Kitten assistants to the regional manager':.175,'Kitten marketeers':.15,'Kitten analysts':.125,'Kitten executives':.115,'Kitten admins':.11,'Kitten strategists':.105,'Kitten angels':.1,'Fortune #103':.05};
 const fingers=['Thousand fingers','Million fingers','Billion fingers','Trillion fingers','Quadrillion fingers','Quintillion fingers','Sextillion fingers','Septillion fingers','Octillion fingers','Nonillion fingers','Decillion fingers','Undecillion fingers'];
 const mice=['Plastic','Iron','Titanium','Adamantium','Unobtainium','Eludium','Wishalloy','Fantasteel','Nevercrack','Armythril','Technobsidian','Plasmarble','Miraculite','Aetherice','Omniplast'].map(x=>x+' mouse');
+const cursorTiers=['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous'];
+function fingerBonus(owned){
+ let bonus=owned(fingers[0])?.1:0;
+ fingers.slice(1).forEach((name,i)=>{if(owned(name))bonus*=i===0?5:i===1?10:20;});
+ return bonus*(owned('Unshackled cursors')?25:1);
+}
+const clickFromCps=(owned,cps)=>cps*.01*(mice.filter(owned).length+Number(owned('Fortune #104')));
+const clickBase=(owned,nonCursors)=>2**cursorTiers.filter(owned).length+fingerBonus(owned)*nonCursors;
+function productionClickShare(g){
+ if(g.hasBuff?.('Cursed finger'))return 0;
+ const owned=name=>has(g,name);
+ const fromCps=clickFromCps(owned,Math.max(0,num(g.cookiesPs)));
+ const nonCursors=Math.max(0,num(g.BuildingsOwned)-num(g.Objects?.Cursor?.amount));
+ return fromCps/(clickBase(owned,nonCursors)+fromCps);
+}
 const flat={'Specialized chocolate chips':1.01,'Designer cocoa beans':1.02,'Underworld ovens':1.03,'Exotic nuts':1.04,'Arcane sugar':1.05,'Increased merriness':1.15,'Improved jolliness':1.15,'A lump of coal':1.01,'An itchy sweater':1.01,"Santa's dominion":1.2,'Fortune #100':1.01,'Fortune #101':1.07,'Dragon scale':1.03,'Wrinkler ambergris':1.06};
 const useful=new Set(['Lucky day','Serendipity','Get lucky','Heavenly luck','Golden goose egg','Omelette','Fortune cookies']);
 const goldenUpgrades=['Lucky day','Serendipity','Get lucky','Golden goose egg'];
@@ -128,12 +150,11 @@ function estimate(g,change){
  const H=n=>has(g,n)||buy?.name===n;
  const amount=o=>num(o?.amount)+(build&&o===build?qty:0), objs=g.ObjectsById||[], cursor=g.Objects?.Cursor, grandma=g.Objects?.Grandma;
  const currentCps=num(g.cookiesPs), currentClick=num(g.computedMouseCps), all=num(g.BuildingsOwned,objs.reduce((s,o)=>s+o.amount,0));
- const finger=fn=>{let a=fn(fingers[0])?.1:0;fingers.slice(1).forEach((n,i)=>{if(fn(n))a*=i===0?5:i===1?10:20;});if(fn('Unshackled cursors'))a*=25;return a;};
  const tier=(o,fn,amt)=>{let m=1;for(const u of Object.values(o.tieredUpgrades||{})){const t=g.Tiers?.[u.tier];if(t&&!t.special&&fn(u.name))m*=2+(g.ascensionMode!==1&&fn(o.unshackleUpgrade)&&fn(t.unshackleUpgrade)?o.id===1?.5:(20-o.id)*.1:0);}for(const u of o.synergies||[])if(fn(u.name))m*=u.buildingTie1===o?1+.05*amt(u.buildingTie2):1+.001*amt(u.buildingTie1);if(o.fortune&&fn(o.fortune.name))m*=1.07;if(o.grandma&&fn(o.grandma.name))m*=1+amt(grandma)*.01/(o.id-1);return m;};
  let base=0;
  for(const o of objs){
    let per=num(o.storedCps), ratio=tier(o,H,amount)/tier(o,n=>has(g,n),o=>num(o?.amount));
-   if(o===cursor){const calc=(fn,non)=>{const base=.1*2**['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous'].filter(fn).length;return base+finger(fn)*non;};ratio*=calc(H,all+(build?qty:0)-amount(cursor))/Math.max(1e-300,calc(n=>has(g,n),all-num(cursor.amount)));}
+   if(o===cursor){const calc=(fn,non)=>.1*2**cursorTiers.filter(fn).length+fingerBonus(fn)*non;ratio*=calc(H,all+(build?qty:0)-amount(cursor))/Math.max(1e-300,calc(n=>has(g,n),all-num(cursor.amount)));}
    if(o===grandma){
     const add=(fn,amt)=>num(o.baseCps,1)+(fn('One mind')?.02*amt(o):0)+(fn('Communal brainsweep')?.02*amt(o):0)+(fn('Elder Pact')?.05*amt(g.Objects?.Portal):0);
     ratio*=add(H,amount)/add(n=>has(g,n),o=>num(o?.amount));
@@ -156,7 +177,7 @@ function estimate(g,change){
  // Relative calculation keeps opaque additive contributions in the baseline.
  const originalBase=objs.reduce((s,o)=>s+num(o.storedCps)*num(o.amount),0)+(has(g,'"egg"')?9:0);
  const delta=(predicted-originalBase*num(g.globalCpsMult,1));
- const clickCalc=(fn,cps,non)=>2**['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous'].filter(fn).length+finger(fn)*non+cps*.01*(mice.filter(fn).length+(fn('Fortune #104')?1:0));
+ const clickCalc=(fn,cps,non)=>clickBase(fn,non)+clickFromCps(fn,cps);
  const clickRatio=clickCalc(H,Math.max(0,currentCps+delta),all+(build?qty:0)-amount(cursor))/Math.max(1e-300,clickCalc(n=>has(g,n),currentCps,all-num(cursor?.amount)));
  return{delta:Math.max(0,delta),click:Math.max(0,currentClick*(clickRatio-1)),quality:'包含层级、协同、奶猫与部分里程碑的估算'};
 }
@@ -248,14 +269,16 @@ function lumpOpenings(g,c){
    owned,enabled:rules.some(key=>c[key])};
  }).filter(Boolean).sort((a,b)=>Number(b.owned)-Number(a.owned)||Number(b.enabled)-Number(a.enabled));
 }
-function lumpMilestones(g){
+function lumpMilestones(g,c){
  const farm=g.Objects?.Farm,cursor=g.Objects?.Cursor,market=mini(g,'Bank');
- const office=market?.offices?.[market.officeLevel];
+ const marketManaged=c?.managed?.saveId===g.fullDate&&c.managed.modes.market==='development';
+ const office=marketManaged&&(market?.officeLevel+1>=c.marketOfficeCap||c.blocked.includes('b:'+cursor?.id))?
+  null:market?.offices?.[market.officeLevel];
  const farmStep=farm?.amount>0&&farm.level>=1&&farm.level<FARM_TILES.length?{
   buildingId:farm.id,level:farm.level+1,label:'扩建花园',
   reason:'种植格从 '+FARM_TILES[farm.level-1]+' 增至 '+FARM_TILES[farm.level]+' 格，农场 9 级达到 6×6。'
  }:null;
- const officeStep=office?.cost&&cursor?.amount>=office.cost[0]&&cursor.level<office.cost[1]?{
+ const officeStep=office?.cost&&cursor?.amount>=office.cost[0]+(marketManaged?c.marketCursorKeep:0)&&cursor.level<office.cost[1]?{
   buildingId:cursor.id,level:office.cost[1],label:'满足股市办公室的等级要求',
   reason:'光标数量已达标，补足等级后可在股市升级办公室。'
  }:null;
@@ -268,7 +291,7 @@ function lumpMilestones(g){
 }
 function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
  if(openings[0]?.owned)return openings[0];
- const {farmStep,officeStep,clickStep}=lumpMilestones(g);
+ const {farmStep,officeStep,clickStep}=lumpMilestones(g,c);
  if((c.harvest||c.plant)&&farmStep)return farmStep;
  if(c.trade&&officeStep)return officeStep;
  if(c.click&&clickStep)return clickStep;
@@ -296,7 +319,7 @@ function lumpRoutePlan(g,c,now=Date.now()){
   return{status:'protected',reason:'挑战保护暂停糖块分配，成熟后仍可收取'};
  }
  if(lumpBalance(g)===null)return{status:'locked',reason:'累计烘焙满 10 亿后开始积攒糖块'};
- const openings=lumpOpenings(g,c),{farmStep,officeStep,clickStep}=lumpMilestones(g);
+ const openings=lumpOpenings(g,c),{farmStep,officeStep,clickStep}=lumpMilestones(g,c);
  const choice=openings.find(opening=>opening.owned)||(c.lumpManagedMode==='growth'&&(farmStep||officeStep||clickStep));
  if(!choice)return openings.length?{status:'building',reason:openings[0].reason}:
   {status:'holding',reason:'当前路线已达标，继续收取并积攒糖块'};
@@ -469,5 +492,5 @@ function wrinklerValue(g,w){let v=w.sucked*1.1*(w.type===1?3:1)*(1+.2*aura(g,'Dr
 function prestige(g){const before=num(g.HowMuchPrestige?.(g.cookiesReset)),after=num(g.HowMuchPrestige?.(num(g.cookiesReset)+num(g.cookiesEarned)));return Math.max(0,Math.floor(after)-Math.floor(before));}
 function semver(s){if(!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/.test(s))throw Error('无效版本号');return s.split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):x);}
 function newer(a,b){const x=semver(a),y=semver(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];if(x.length===3||y.length===3)return x.length===3&&y.length>3;return (x[3]===y[3]?x[4]>y[4]:x[3]==='rc');}
-return{VERSION,SUPPORTED,AUTO,MANAGED_MODES,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
+return{VERSION,SUPPORTED,AUTO,MANAGED_MODES,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,productionClickShare,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
 });

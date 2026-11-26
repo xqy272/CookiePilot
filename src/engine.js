@@ -8,7 +8,9 @@
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
 const ASCENT='cookie-pilot:ascent:v3',REBUY='cookie-pilot:rebuy:v3',DIAGNOSTICS='cookie-pilot:activity:v3';
 const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode',
- 'managed','ascendTarget','ascendCombo','comboWait','challenge','protectShiny','background','remember'];
+ 'managed','ascendTarget','ascendCombo','comboWait','challenge','protectShiny','background','remember',
+ 'marketOfficeCap','marketCursorKeep','marketBrokerCap','marketLoan','marketLoanSave','marketBudget',
+ 'gardenAutoSoil','gardenCrop','gardenSpend','harvestBuff'];
 const roundKey=g=>g?.fullDate&&g?.startDate?[g.fullDate,g.startDate,g.seed].join(':'):'';
 function withSpecialMenu(g,tab,fn){
  if(g.specialTab||!g.ToggleSpecialMenu)return fn();
@@ -480,6 +482,24 @@ class Engine{
  }
  breed(c,info){
   const g=this.g,plan=M.gardenPlan(g,c,info),tile=plan.tile;
+  if(plan.kind==='soil'||plan.kind==='buy'){
+   this.backup(plan.kind==='soil'?'更换花园土壤前':'购买花园奖励前');
+   if(!this.managedExecution('garden',g))return this.state('plant','花园托管已暂停');
+   const fresh=M.gardenPlan(g,M.execution(g,this.c));
+   if(fresh.kind!==plan.kind||fresh.soil!==plan.soil||fresh.upgrade!==plan.upgrade){
+    return this.state('plant',fresh.reason);
+   }
+   if(fresh.kind==='soil'){
+    if(!this.hooks.nativeClick?.('gardenSoil-'+fresh.soil.id)||info.m.soil!==fresh.soil.id){
+     return this.state('plant','等待原版土壤按钮可用');
+    }
+   }else{
+    fresh.upgrade.buy();
+    if(!C.has(g,fresh.upgrade.name))throw Error('游戏未确认购买花园奖励');
+   }
+   this.log('花园托管 · '+fresh.reason,1);
+   return this.state('plant',fresh.reason);
+  }
   if(!tile)return this.state('plant',plan.reason);
   const field=info.m;
   if(plan.kind==='harvest'){
@@ -500,7 +520,11 @@ class Engine{
  }
  trade(c=this.c){
   const g=this.g;
+  const job=this.ascentJob(g),loan=M.marketLoanPlan(g,c,job,this.clickSample.rate);
+  if(loan)return this.developMarket(g,loan,job);
   const {data,orders,reason}=M.marketOrder(g,c,this.hist,this.ledger);
+  const development=M.marketDevelopment(g,c);
+  if(development.kind&&!orders?.some(order=>order.side==='sell'))return this.developMarket(g,development);
   if(!data)return this.state('trade',reason);
   for(const {q} of data.goods){
    const lot=this.ledger[q.id];
@@ -522,7 +546,32 @@ class Engine{
     return this.state('trade','已买入 '+q.name);
    }
   }
-  return this.state('trade',reason||'等待游戏确认交易');
+  return this.state('trade',development.reason||reason||'等待游戏确认交易');
+ }
+ developMarket(g,plan,job){
+  this.backup('股市托管花费前',plan.kind!=='broker');
+  if(!this.managedExecution('market',g))return this.state('trade','股市托管已暂停');
+  const c=M.execution(g,this.c);
+  const fresh=plan.kind==='loan'?M.marketLoanPlan(g,c,this.ascentJob(g),this.clickSample.rate):M.marketDevelopment(g,c);
+  if(fresh?.kind!==plan.kind||fresh.m!==plan.m||fresh.id!==plan.id||fresh.quantity!==plan.quantity){
+   return this.state('trade',fresh?.reason||'股市托管条件已变化');
+  }
+  const m=fresh.m;
+  if(fresh.kind==='loan'){
+   this.saveAscent(g,{...job,loanUsed:true});
+   if(!m.takeLoan(fresh.id))return this.state('trade','游戏未确认贷款');
+   g.WriteSave();
+  }else{
+   const office=fresh.kind==='office';
+   const before=office?m.officeLevel:m.brokers;
+   const id=office?'bankOfficeUpgrade':'bankBrokersBuy';
+   if(!this.hooks.nativeClick?.(id)||(office?m.officeLevel:m.brokers)!==before+1){
+    return this.state('trade','等待原版股市按钮可用');
+   }
+   g.WriteSave();
+  }
+  this.log('股市托管 · '+fresh.reason+(fresh.cost?' · 花费 '+C.fmt(fresh.cost):''),1);
+  return this.state('trade',fresh.reason);
  }
  spellPlan(g,c,now=Date.now(),track=false){
   const book=C.mini(g,'Wizard tower');
@@ -550,6 +599,7 @@ class Engine{
    if(fresh.reason||fresh.key!==key||fresh.m!==m)return this.state('cast',fresh.reason||'施法条件已变化');
   }
   const before=key==='hand of fate'?new Set(g.shimmers):null;
+  const job=before&&c.marketLoan&&c.marketLoanSave===g.fullDate?this.ascentJob(g):null;
   this.lastCast=now;
   if(!m.castSpell(spell))return this.state('cast','游戏拒绝施法');
   this.log('施放 '+spell.name+' · 剩 '+C.fmt(m.magic)+' 魔力'+(detail?' · '+detail:''),1);
@@ -558,6 +608,10 @@ class Engine{
    if(summoned){
     summoned.pop();
     if(summoned.popped||summoned.dead||!g.shimmers.includes(summoned)){
+     if(job?.phase==='prepare'&&job.round===roundKey(g)&&job.combo?.until>now&&
+        job.combo.index+1===m.spellsCastTotal&&g.hasBuff?.('Click frenzy')){
+      this.saveAscent(g,{...job,combo:{...job.combo,triggered:true}});
+     }
      this.picked++;
      this.log('魔法书托管 · 收取本次召唤的金饼干',1);
     }
@@ -670,7 +724,10 @@ class Engine{
   const managed=M.modes(g,c).dragon;
   if(!C.has(g,'Pet the dragon')||g.dragonLevel<(managed?8:4))return this.state('pet','等待解锁龙掉落');
   const missing=M.dragonDrops(g);
-  if(!missing.length)return this.state('pet','本轮龙掉落已收集');
+  if(!missing.length){
+   const {unlocked}=M.dragonRewardStatus(g);
+   return this.state('pet',unlocked?'龙掉落全部解锁 · '+unlocked+' 件待购买':'本轮龙掉落已全部购买');
+  }
   if(g.specialTab==='dragon')g.ClickSpecialPic();
   else if(managed&&!g.specialTab&&g.ToggleSpecialMenu)withSpecialMenu(g,'dragon',()=>{
    g.ToggleSpecialMenu(1);
@@ -685,7 +742,7 @@ class Engine{
   const g=this.g,mode=M.modes(g,c).dragon;
   const plan=M.dragonPlan(g,c,mode);
   if(!plan.kind)return this.state('dragon',plan.reason);
-  this.backup(plan.kind==='buy'?'购买龙蛋前':'龙升级前');
+  this.backup(plan.kind==='buy'?'购买龙升级前':'龙升级前');
   if(mode){
    if(!this.managedExecution('dragon',g))return this.state('dragon','龙托管已暂停');
    const run=M.execution(g,this.c),fresh=M.dragonPlan(g,run,M.modes(g,run).dragon);
@@ -693,9 +750,9 @@ class Engine{
   }
   if(plan.kind==='buy'){
    plan.upgrade.buy();
-   if(!C.has(g,plan.upgrade.name))throw Error('游戏未确认购买龙蛋');
+   if(!C.has(g,plan.upgrade.name))throw Error('游戏未确认购买 '+plan.upgrade.name);
    this.log('养龙托管 · '+plan.reason,1);
-   return this.state('dragon','已购买龙蛋');
+   return this.state('dragon','已购买 '+(plan.upgrade.dname||plan.upgrade.name));
   }
   if(mode)withSpecialMenu(g,'dragon',()=>g.UpgradeDragon());
   else g.UpgradeDragon();
@@ -724,7 +781,7 @@ class Engine{
  }
  aura(c=this.c){
   const g=this.g,managed=M.modes(g,c).dragon;
-  if(managed){
+  if(managed&&c.aura0<0&&c.aura1<0){
    const plan=M.growthAura(g,c);
    if(!plan)return this.state('aura','保留现有光环或等待训练完成与牺牲预算');
    this.backup('龙托管配置光环前');

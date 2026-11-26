@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cookie Pilot · 饼干领航员
 // @namespace    https://github.com/xqy272/CookiePilot
-// @version      3.0.3
+// @version      3.1.0
 // @description  全流程 Cookie Clicker 中文助手：现代工作台、采购、花园、法术、股市、成长、存档与在线更新。
 // @author       Cookie Pilot contributors
 // @match        https://orteil.dashnet.org/cookieclicker/
@@ -19,16 +19,16 @@
 // @downloadURL  https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js
 // ==/UserScript==
 
-/* Cookie Pilot 3.0.3 · MIT · bundled locally; no remote executable code. */
+/* Cookie Pilot 3.1.0 · MIT · bundled locally; no remote executable code. */
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='3.0.3', SUPPORTED='2.058';
+const VERSION='3.1.0', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const MANAGED_MODES={
- events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield','combo'],pantheon:['lineup'],
- market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],
- research:['safe','one-mind','full','pledge'],ascension:['notice','cycle']
+ events:['idle','burst'],purchase:['efficient'],garden:['seeds','cycle'],magic:['yield','combo'],pantheon:['lineup'],
+ market:['portfolio','development'],dragon:['hatch','collect','develop'],season:['collection'],wrinklers:['yield','drops'],
+ research:['safe','seasonal','one-mind','full','pledge'],ascension:['notice','cycle']
 };
 const LUMP_BAKING_CAP=100;
 const LUMP_UNLOCKS=[
@@ -40,8 +40,10 @@ const LUMP_UNLOCKS=[
 const FARM_TILES=[4,6,9,12,16,20,25,30,36];
 const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',open:false,background:false,remember:false,ads:true,protectVeil:true,alerts:true,sound:false,rate:20,clickMode:'always',reserveMode:'none',reserve:0,holdCombo:true,purchaseMode:'efficient',bridgePurchase:false,target:'',blocked:[],maxBuilding:10000,bulk:1,
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
+ gardenAutoSoil:true,gardenCrop:'auto',
 spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,comboWait:240,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
+ marketOfficeCap:2,marketCursorKeep:25,marketBrokerCap:3,marketLoan:0,marketLoanSave:0,
 lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,lumpManagedSave:0,lumpManagedMode:'growth',
 wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
 godzamokBuildings:[],godzamokKeep:1,godzamokSell:100,seasonTarget:'',ascendTarget:365,heavenlyTarget:'',ascendCombo:true,
@@ -60,6 +62,11 @@ function config(input={},startup=false){
  for(const k of ['rate','maxBuilding','bulk','marketCap','marketMinSamples','wrinklerKeep','dragonMax','aura0','aura1','swapReserve','godzamokKeep','godzamokSell'])c[k]=Math.floor(c[k]);
  c.lumpReserve=Math.ceil(c.lumpReserve);
  c.comboWait=Math.round(clamp(input.comboWait,30,1800,c.comboWait));
+ for(const [key,[low,high]] of Object.entries({marketOfficeCap:[1,6],marketCursorKeep:[1,1000],marketBrokerCap:[0,100],marketLoan:[0,3]})){
+  c[key]=Math.floor(clamp(input[key],low,high,c[key]));
+ }
+ if(['auto','bakeberry','queenbeet','duketater','chocoroot','whiteChocoroot'].includes(input.gardenCrop))c.gardenCrop=input.gardenCrop;
+ if(Number.isSafeInteger(input.marketLoanSave)&&input.marketLoanSave>0)c.marketLoanSave=input.marketLoanSave;
  c.lumpGoal=lumpGoal(input.lumpGoal);
  if(!c.lumpGoal?.saveId)c.lumpLevel=false;
  if(Number.isSafeInteger(input.lumpManagedSave)&&input.lumpManagedSave>0)c.lumpManagedSave=input.lumpManagedSave;
@@ -127,6 +134,21 @@ const plain=s=>String(s||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 const kittens={'Kitten helpers':.1,'Kitten workers':.125,'Kitten engineers':.15,'Kitten overseers':.175,'Kitten managers':.2,'Kitten accountants':.2,'Kitten specialists':.2,'Kitten experts':.2,'Kitten consultants':.2,'Kitten assistants to the regional manager':.175,'Kitten marketeers':.15,'Kitten analysts':.125,'Kitten executives':.115,'Kitten admins':.11,'Kitten strategists':.105,'Kitten angels':.1,'Fortune #103':.05};
 const fingers=['Thousand fingers','Million fingers','Billion fingers','Trillion fingers','Quadrillion fingers','Quintillion fingers','Sextillion fingers','Septillion fingers','Octillion fingers','Nonillion fingers','Decillion fingers','Undecillion fingers'];
 const mice=['Plastic','Iron','Titanium','Adamantium','Unobtainium','Eludium','Wishalloy','Fantasteel','Nevercrack','Armythril','Technobsidian','Plasmarble','Miraculite','Aetherice','Omniplast'].map(x=>x+' mouse');
+const cursorTiers=['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous'];
+function fingerBonus(owned){
+ let bonus=owned(fingers[0])?.1:0;
+ fingers.slice(1).forEach((name,i)=>{if(owned(name))bonus*=i===0?5:i===1?10:20;});
+ return bonus*(owned('Unshackled cursors')?25:1);
+}
+const clickFromCps=(owned,cps)=>cps*.01*(mice.filter(owned).length+Number(owned('Fortune #104')));
+const clickBase=(owned,nonCursors)=>2**cursorTiers.filter(owned).length+fingerBonus(owned)*nonCursors;
+function productionClickShare(g){
+ if(g.hasBuff?.('Cursed finger'))return 0;
+ const owned=name=>has(g,name);
+ const fromCps=clickFromCps(owned,Math.max(0,num(g.cookiesPs)));
+ const nonCursors=Math.max(0,num(g.BuildingsOwned)-num(g.Objects?.Cursor?.amount));
+ return fromCps/(clickBase(owned,nonCursors)+fromCps);
+}
 const flat={'Specialized chocolate chips':1.01,'Designer cocoa beans':1.02,'Underworld ovens':1.03,'Exotic nuts':1.04,'Arcane sugar':1.05,'Increased merriness':1.15,'Improved jolliness':1.15,'A lump of coal':1.01,'An itchy sweater':1.01,"Santa's dominion":1.2,'Fortune #100':1.01,'Fortune #101':1.07,'Dragon scale':1.03,'Wrinkler ambergris':1.06};
 const useful=new Set(['Lucky day','Serendipity','Get lucky','Heavenly luck','Golden goose egg','Omelette','Fortune cookies']);
 const goldenUpgrades=['Lucky day','Serendipity','Get lucky','Golden goose egg'];
@@ -150,12 +172,11 @@ function estimate(g,change){
  const H=n=>has(g,n)||buy?.name===n;
  const amount=o=>num(o?.amount)+(build&&o===build?qty:0), objs=g.ObjectsById||[], cursor=g.Objects?.Cursor, grandma=g.Objects?.Grandma;
  const currentCps=num(g.cookiesPs), currentClick=num(g.computedMouseCps), all=num(g.BuildingsOwned,objs.reduce((s,o)=>s+o.amount,0));
- const finger=fn=>{let a=fn(fingers[0])?.1:0;fingers.slice(1).forEach((n,i)=>{if(fn(n))a*=i===0?5:i===1?10:20;});if(fn('Unshackled cursors'))a*=25;return a;};
  const tier=(o,fn,amt)=>{let m=1;for(const u of Object.values(o.tieredUpgrades||{})){const t=g.Tiers?.[u.tier];if(t&&!t.special&&fn(u.name))m*=2+(g.ascensionMode!==1&&fn(o.unshackleUpgrade)&&fn(t.unshackleUpgrade)?o.id===1?.5:(20-o.id)*.1:0);}for(const u of o.synergies||[])if(fn(u.name))m*=u.buildingTie1===o?1+.05*amt(u.buildingTie2):1+.001*amt(u.buildingTie1);if(o.fortune&&fn(o.fortune.name))m*=1.07;if(o.grandma&&fn(o.grandma.name))m*=1+amt(grandma)*.01/(o.id-1);return m;};
  let base=0;
  for(const o of objs){
    let per=num(o.storedCps), ratio=tier(o,H,amount)/tier(o,n=>has(g,n),o=>num(o?.amount));
-   if(o===cursor){const calc=(fn,non)=>{const base=.1*2**['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous'].filter(fn).length;return base+finger(fn)*non;};ratio*=calc(H,all+(build?qty:0)-amount(cursor))/Math.max(1e-300,calc(n=>has(g,n),all-num(cursor.amount)));}
+   if(o===cursor){const calc=(fn,non)=>.1*2**cursorTiers.filter(fn).length+fingerBonus(fn)*non;ratio*=calc(H,all+(build?qty:0)-amount(cursor))/Math.max(1e-300,calc(n=>has(g,n),all-num(cursor.amount)));}
    if(o===grandma){
     const add=(fn,amt)=>num(o.baseCps,1)+(fn('One mind')?.02*amt(o):0)+(fn('Communal brainsweep')?.02*amt(o):0)+(fn('Elder Pact')?.05*amt(g.Objects?.Portal):0);
     ratio*=add(H,amount)/add(n=>has(g,n),o=>num(o?.amount));
@@ -178,7 +199,7 @@ function estimate(g,change){
  // Relative calculation keeps opaque additive contributions in the baseline.
  const originalBase=objs.reduce((s,o)=>s+num(o.storedCps)*num(o.amount),0)+(has(g,'"egg"')?9:0);
  const delta=(predicted-originalBase*num(g.globalCpsMult,1));
- const clickCalc=(fn,cps,non)=>2**['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous'].filter(fn).length+finger(fn)*non+cps*.01*(mice.filter(fn).length+(fn('Fortune #104')?1:0));
+ const clickCalc=(fn,cps,non)=>clickBase(fn,non)+clickFromCps(fn,cps);
  const clickRatio=clickCalc(H,Math.max(0,currentCps+delta),all+(build?qty:0)-amount(cursor))/Math.max(1e-300,clickCalc(n=>has(g,n),currentCps,all-num(cursor?.amount)));
  return{delta:Math.max(0,delta),click:Math.max(0,currentClick*(clickRatio-1)),quality:'包含层级、协同、奶猫与部分里程碑的估算'};
 }
@@ -270,14 +291,16 @@ function lumpOpenings(g,c){
    owned,enabled:rules.some(key=>c[key])};
  }).filter(Boolean).sort((a,b)=>Number(b.owned)-Number(a.owned)||Number(b.enabled)-Number(a.enabled));
 }
-function lumpMilestones(g){
+function lumpMilestones(g,c){
  const farm=g.Objects?.Farm,cursor=g.Objects?.Cursor,market=mini(g,'Bank');
- const office=market?.offices?.[market.officeLevel];
+ const marketManaged=c?.managed?.saveId===g.fullDate&&c.managed.modes.market==='development';
+ const office=marketManaged&&(market?.officeLevel+1>=c.marketOfficeCap||c.blocked.includes('b:'+cursor?.id))?
+  null:market?.offices?.[market.officeLevel];
  const farmStep=farm?.amount>0&&farm.level>=1&&farm.level<FARM_TILES.length?{
   buildingId:farm.id,level:farm.level+1,label:'扩建花园',
   reason:'种植格从 '+FARM_TILES[farm.level-1]+' 增至 '+FARM_TILES[farm.level]+' 格，农场 9 级达到 6×6。'
  }:null;
- const officeStep=office?.cost&&cursor?.amount>=office.cost[0]&&cursor.level<office.cost[1]?{
+ const officeStep=office?.cost&&cursor?.amount>=office.cost[0]+(marketManaged?c.marketCursorKeep:0)&&cursor.level<office.cost[1]?{
   buildingId:cursor.id,level:office.cost[1],label:'满足股市办公室的等级要求',
   reason:'光标数量已达标，补足等级后可在股市升级办公室。'
  }:null;
@@ -290,7 +313,7 @@ function lumpMilestones(g){
 }
 function lumpAdvice(g,c,openings=lumpOpenings(g,c)){
  if(openings[0]?.owned)return openings[0];
- const {farmStep,officeStep,clickStep}=lumpMilestones(g);
+ const {farmStep,officeStep,clickStep}=lumpMilestones(g,c);
  if((c.harvest||c.plant)&&farmStep)return farmStep;
  if(c.trade&&officeStep)return officeStep;
  if(c.click&&clickStep)return clickStep;
@@ -318,7 +341,7 @@ function lumpRoutePlan(g,c,now=Date.now()){
   return{status:'protected',reason:'挑战保护暂停糖块分配，成熟后仍可收取'};
  }
  if(lumpBalance(g)===null)return{status:'locked',reason:'累计烘焙满 10 亿后开始积攒糖块'};
- const openings=lumpOpenings(g,c),{farmStep,officeStep,clickStep}=lumpMilestones(g);
+ const openings=lumpOpenings(g,c),{farmStep,officeStep,clickStep}=lumpMilestones(g,c);
  const choice=openings.find(opening=>opening.owned)||(c.lumpManagedMode==='growth'&&(farmStep||officeStep||clickStep));
  if(!choice)return openings.length?{status:'building',reason:openings[0].reason}:
   {status:'holding',reason:'当前路线已达标，继续收取并积攒糖块'};
@@ -491,7 +514,7 @@ function wrinklerValue(g,w){let v=w.sucked*1.1*(w.type===1?3:1)*(1+.2*aura(g,'Dr
 function prestige(g){const before=num(g.HowMuchPrestige?.(g.cookiesReset)),after=num(g.HowMuchPrestige?.(num(g.cookiesReset)+num(g.cookiesEarned)));return Math.max(0,Math.floor(after)-Math.floor(before));}
 function semver(s){if(!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/.test(s))throw Error('无效版本号');return s.split(/[.\-]/).map(x=>/^\d+$/.test(x)?Number(x):x);}
 function newer(a,b){const x=semver(a),y=semver(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]>y[i];if(x.length===3||y.length===3)return x.length===3&&y.length>3;return (x[3]===y[3]?x[4]>y[4]:x[3]==='rc');}
-return{VERSION,SUPPORTED,AUTO,MANAGED_MODES,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
+return{VERSION,SUPPORTED,AUTO,MANAGED_MODES,defaults,config,migrate,num,clamp,has,aura,mini,ready,compatible,gate,veil,clickBuff,cpsBuff,reserve,fmt,time,escape,plain,upgradeClass,estimate,productionClickShare,purchases,purchasePlan,manaSeconds,castPlan,rng,forecast,garden,harvestTargets,tileName,LUMP_BAKING_CAP,LUMP_UNLOCKS,FARM_TILES,lumpBalance,lumpBudget,lumpOpenings,lumpAdvice,lumpWindow,lumpPlan,managesLumps,collectsLumps,lumpRoutePlan,pantheonAdvice,pantheonPlan,mutations,layout,plantingPlan,market,wrinklerValue,prestige,semver,newer};
 });
 
 ;
@@ -531,6 +554,7 @@ function seasonActivity(g,rule){
 }
 function wrinklerMode(g,c){
  const m=modes(g,c);
+ if(m.research==='seasonal'&&m.season&&seasonActivity(g,'wrinkler'))return'drops';
  return m.wrinklers||(m.season&&seasonActivity(g,'wrinkler')?'drops':'');
 }
 function execution(g,c){
@@ -543,7 +567,7 @@ function execution(g,c){
   ...(m.magic?{cast:true}:{}),
   ...(m.pantheon?{pantheon:true,gods:c.managed.gods||[-1,-1,-1]}:{}),
   ...(m.market?{trade:true,marketThresholds:{}}:{}),
-  ...(m.dragon?{dragon:true,pet:true,aura:m.dragon==='develop'}:{}),
+  ...(m.dragon?{dragon:true,pet:true,aura:m.dragon==='develop'||c.aura}:{}),
   ...(m.season?{season:true,deer:seasonActivity(g,'deer')||!!m.events||c.deer,
    golden:seasonActivity(g,'golden')||!!m.events||c.golden}:{}),
   ...(wrinklerMode(g,c)?{wrinkler:true,protectShiny:true}:{})
@@ -569,6 +593,16 @@ function purchasePlan(g,c,options={}){
    const plan=C.purchasePlan(g,{...c,bulk:1,purchaseMode:'target',target:id},
     {bridgedTarget:options.bridgedTarget});
    if(plan.next||Number.isFinite(plan.seconds)&&plan.seconds<=120)return{...plan,unlock:item.feature};
+  }
+  const office=managed.market==='development'&&officeTarget(g,c);
+  const dragon=managed.dragon&&dragonTrainingTarget(g,c,managed.dragon);
+  for(const item of [office,dragon]){
+   if(!item||item.object.amount>=item.target||item.object.locked)continue;
+   const id='b:'+item.object.id;
+   if(c.blocked.includes(id))continue;
+   const bulk=Math.min(c.bulk,item.target-item.object.amount);
+   const plan=C.purchasePlan(g,{...c,bulk,purchaseMode:'target',target:id});
+   if(plan.next||Number.isFinite(plan.seconds)&&plan.seconds<=120)return{...plan,unlock:item.label};
   }
   const plan=C.purchasePlan(g,c,options);
   if(!plan.next&&c.bulk>1&&g.BuildingsOwned<20){
@@ -734,12 +768,19 @@ function permanentSlots(g){
 
 const researchChain=['Bingo center/Research facility','Specialized chocolate chips','Designer cocoa beans',
  'Ritual rolling pins','Underworld ovens','One mind','Exotic nuts','Communal brainsweep','Arcane sugar','Elder Pact'];
+function halloweenResearchNeeded(g,c){
+ if(!modes(g,c).season||!missingDrops(g,g.halloweenDrops).length||C.has(g,'Elder Covenant'))return false;
+ const trigger=g.Upgrades?.[g.seasons?.halloween?.trigger];
+ return g.season==='halloween'||!!trigger?.unlocked&&!upgradeProtected(g,c,trigger)&&
+  C.num(g.seasonUses)<c.managed.seasonLimit;
+}
 function researchPlan(g,c){
  const mode=modes(g,c).research;
  if(!mode)return{reason:'研究托管已关闭'};
  if(g.ascensionMode===1||['noUpgrade','both'].includes(c.challenge))return{reason:'挑战保护：暂停研究采购'};
  if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓研究采购'};
- const length=mode==='safe'?5:mode==='one-mind'?6:researchChain.length;
+ const length=mode==='seasonal'?(halloweenResearchNeeded(g,c)?6:5):
+  mode==='safe'?5:mode==='one-mind'?6:researchChain.length;
  let name=researchChain.slice(0,length).find(key=>!C.has(g,key));
  if(!name&&mode==='pledge'){
   if(!g.elderWrath||g.pledgeT>0)return{reason:'安抚生效，等待老太婆恢复愤怒'};
@@ -752,7 +793,7 @@ function researchPlan(g,c){
   }
   name='Elder Pledge';
  }
- if(!name)return{reason:'已完成设定的研究阶段'};
+ if(!name)return{reason:mode==='seasonal'&&!C.has(g,'One mind')?'前置研究已完成，等待万圣节收藏条件':'已完成设定的研究阶段'};
  const upgrade=g.Upgrades?.[name];
  const display=upgrade?.dname||name;
  if(!upgrade?.unlocked||upgrade.bought)return{reason:'等待解锁 '+display,seconds:g.researchT>0?g.researchT/(g.fps||30):undefined};
@@ -848,11 +889,77 @@ function breedLayout(info,protectedTiles){
  return{empty,best};
 }
 
+const gardenDrops=[
+ ['bakerWheat','Wheat slims'],['elderwort','Elderwort biscuits'],['bakeberry','Bakeberry cookies'],
+ ['duketater','Duketater cookies'],['greenRot','Green yeast digestives'],['drowsyfern','Fern tea'],['ichorpuff','Ichor syrup']
+];
+const gardenCrops=[
+ ['bakeberry',1800,.03],['queenbeet',3600,.04],['duketater',7200,.08],
+ ['chocoroot',180,.03],['whiteChocoroot',180,.03]
+];
+function gardenSoil(g,c,info,key){
+ const {m}=info,soil=m.soils?.[key];
+ if(!c.gardenAutoSoil||!soil||m.soil===soil.id||m.nextSoil>Date.now()||
+    (m.parent?.amount??g.Objects?.Farm?.amount??0)<soil.req||c.protectedTiles.length||
+    c.holdCombo&&C.clickBuff(g))return null;
+ return{kind:'soil',soil,seconds:0,reason:'切换土壤 · '+soil.name};
+}
+function gardenCycle(g,c,info){
+ const {m,cells}=info;
+ const relevant=cells.filter(tile=>tile.unlocked&&!c.protectedTiles.includes(tile.key));
+ const pending=gardenDrops.filter(([key,name])=>m.plants[key]?.unlocked&&g.Upgrades?.[name]&&
+  !upgradeProtected(g,c,g.Upgrades[name])&&!C.has(g,name)&&!g.HasUnlocked?.(name));
+ const reward=rewardPurchase(g,c,gardenDrops.map(([,name])=>name),'购买花园奖励');
+ if(reward?.kind&&!(c.holdCombo&&C.clickBuff(g))&&!['noUpgrade','both'].includes(c.challenge))return reward;
+ const dirt=gardenSoil(g,c,info,'fertilizer');
+ const keep=C.reserve(g,c),budget=Math.max(0,g.cookies-keep)*c.gardenSpend/100;
+ const base=Math.max(0,C.num(g.unbuffedCps,g.cookiesPs));
+ const growing=relevant.filter(tile=>tile.p);
+ const outstanding=new Set(pending.map(([key])=>key));
+ const hasDrop=growing.some(tile=>outstanding.has(tile.p.key));
+ const ready=growing.find(tile=>tile.mature&&outstanding.has(tile.p.key));
+ if(ready)return{kind:'harvest',tile:ready,seconds:0,reason:'收获以寻找花园掉落 · '+ready.p.name};
+ const cashCrops=gardenCrops.filter(([key])=>c.gardenCrop==='auto'||key===c.gardenCrop);
+ const eligible=cashCrops.map(([key,seconds,bank])=>{
+  const plant=m.plants[key];
+  if(!plant?.unlocked||!plant.plantable)return null;
+  const cost=m.getCost(plant);
+  const gain=Math.min(g.cookies*bank,base*Math.max(1,c.harvestBuff)*seconds);
+  const growth=plant.mature/Math.max(.001,plant.ageTick+plant.ageTickR/2);
+  return{plant,score:(gain-cost)/growth,cost};
+ }).filter(Boolean).sort((a,b)=>b.score-a.score);
+ let target=growing.find(tile=>outstanding.has(tile.p.key))?.p;
+ if(!target&&pending.length)target=m.plants[pending[0][0]];
+ const cashNames=new Set(cashCrops.map(([key])=>key));
+ const nearWilt=({x,y,age,p})=>!p.immortal&&age+Math.ceil((p.ageTick+p.ageTickR)*
+  C.num(m.plotBoost?.[y]?.[x]?.[0],1)*(1+.05*C.aura(g,'Supreme Intellect')))>=100;
+ const payout=growing.find(tile=>tile.mature&&cashNames.has(tile.p.key)&&
+  (C.cpsBuff(g)>=c.harvestBuff||nearWilt(tile)));
+ if(payout)return{kind:'harvest',tile:payout,seconds:0,reason:'收获饼干 · '+payout.p.name};
+ const planted=growing.find(tile=>cashNames.has(tile.p.key));
+ const choice=eligible.find(row=>row.score>0&&row.cost<=budget);
+ target??=planted?.p||choice?.plant;
+ if(!target)return reward||{reason:'等待可按预算种植并回本的作物'};
+ if(c.holdCombo&&(C.clickBuff(g)||C.cpsBuff(g)>1))return{reason:'等待临时增益结束后按基础价格种植'};
+ if(dirt)return dirt;
+ const crop=growing.filter(tile=>tile.p===target);
+ const empty=relevant.find(tile=>!tile.p);
+ const cost=m.getCost(target);
+ if(empty&&Number.isFinite(cost)&&cost>=0&&cost*(crop.length+1)<=budget){
+  return{kind:'plant',tile:{...empty,plant:target,cost},keep,cost,seconds:0,reason:'种植 '+target.name+(hasDrop||pending.length?' · 收集掉落':' · 收获饼干')};
+ }
+ if(crop.length){
+  const next=Math.min(...crop.map(tile=>tile.mature?tile.death:tile.eta));
+  return{kind:'wait',seconds:Math.max(info.next,next),reason:'等待 '+target.name+(crop.some(tile=>tile.mature)?' 的收获时机':' 成熟')};
+ }
+ return{reason:empty?'等待 '+target.name+' 种植预算':'等待空白地块'};
+}
 function gardenPlan(g,c,info=C.garden(g)){
  if(!info)return{reason:'农场升至 1 级解锁花园'};
  const {m,cells}=info;
  if(m.freeze)return{reason:'花园已冻结'};
- if(Object.values(m.plants).every(plant=>plant.unlocked))return{reason:'种子已收齐'};
+ const cycle=modes(g,c).garden==='cycle';
+ if(Object.values(m.plants).every(plant=>plant.unlocked))return cycle?gardenCycle(g,c,info):{reason:'种子已收齐'};
  const visible=cells.filter(tile=>tile.unlocked&&tile.p&&!c.protectedTiles.includes(tile.key));
  const spores=['brownMold','crumbspore'].filter(key=>m.plants[key]&&!m.plants[key].unlocked);
  const crop=visible.filter(tile=>!tile.p.unlocked||spores.length&&tile.p.key==='meddleweed')
@@ -860,6 +967,11 @@ function gardenPlan(g,c,info=C.garden(g)){
  if(crop)return crop.mature?{kind:'harvest',tile:crop,seconds:0,reason:'收获 '+C.tileName(crop)+' '+crop.p.name}:
   {kind:'wait',seconds:Math.max(info.next,crop.eta),reason:'等待 '+C.tileName(crop)+' '+crop.p.name+' 成熟'};
  const {empty,best}=breedLayout(info,c.protectedTiles);
+ if(cycle){
+  const key=best&&!best.missing.length&&best.eta<=info.next?'woodchips':'fertilizer';
+  const soil=gardenSoil(g,c,info,key);
+  if(soil)return soil;
+ }
  const weed=m.plants.meddleweed;
  const wild=weed&&!weed.unlocked&&empty.some(tile=>!cells.some(neighbor=>neighbor.p&&neighbor.unlocked&&
   Math.abs(neighbor.x-tile.x)<=1&&Math.abs(neighbor.y-tile.y)<=1));
@@ -886,6 +998,69 @@ function gardenPlan(g,c,info=C.garden(g)){
  return{kind:'plant',tile,keep,seconds:0,reason:target,cost:best.cost};
 }
 
+function officeTarget(g,c,m=C.mini(g,'Bank')){
+ const object=g.Objects?.Cursor,office=m?.offices?.[m.officeLevel];
+ if(!object||!Array.isArray(office?.cost)||m.officeLevel+1>=c.marketOfficeCap)return null;
+ const [quantity,level]=office.cost;
+ if(!Number.isInteger(quantity)||quantity<1||!Number.isInteger(level))return null;
+ return{object,office,quantity,level,target:quantity+c.marketCursorKeep,label:'股市办公室'};
+}
+function marketDevelopment(g,c){
+ if(modes(g,c).market!=='development')return{};
+ if(['noUpgrade','both'].includes(c.challenge))return{reason:'无升级挑战保护：暂缓股市发展'};
+ const m=C.mini(g,'Bank');
+ if(!m)return{reason:'银行升至 1 级解锁股市'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓办公室和经纪人'};
+ const office=officeTarget(g,c,m);
+ let priority='';
+ if(office){
+  const {object,target,level,quantity}=office;
+  if(object.level>=level&&object.amount>=target&&!c.blocked.includes('b:'+object.id)){
+   return{kind:'office',m,quantity,reason:'升级股市办公室 · 消耗 '+quantity+' 个指针 · 保留 '+c.marketCursorKeep+' 个'};
+  }
+  priority=c.blocked.includes('b:'+object.id)?'指针受保护，暂缓升级办公室':
+   '办公室需要 '+level+' 级指针、'+target+' 个指针';
+ }
+ const cap=Math.min(c.marketBrokerCap,m.getMaxBrokers?.()??0);
+ if(m.brokers<cap){
+  const cost=m.getBrokerPrice?.();
+  const available=Math.max(0,g.cookies-C.reserve(g,c));
+  if(Number.isFinite(cost)&&cost>=0&&cost<=available*c.marketBudget/100){
+   return{kind:'broker',m,cost,reason:'雇佣经纪人 · '+m.brokers+' / '+cap};
+  }
+  return{reason:priority||'等待经纪人预算'};
+ }
+ return{reason:priority};
+}
+function marketLoanPlan(g,c,job,clickRate){
+ const activeModes=modes(g,c);
+ if(activeModes.market!=='development'||activeModes.ascension!=='cycle'||!activeModes.magic||
+    !c.marketLoan||c.marketLoanSave!==g.fullDate||c.challenge!=='none'||!c.click||!c.ascendCombo||
+    C.veil(g,c)||g.ascensionMode||g.nextAscensionMode||g.recalculateGains||
+    job?.phase!=='prepare'||job.round!==[g.fullDate,g.startDate,g.seed].join(':')||
+    !job.combo?.triggered||job.loanUsed)return null;
+ if(c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return null;
+ const budget=heavenlyBudget(g,job.names),gained=C.prestige(g);
+ if(budget.error||gained<Math.max(job.target,c.ascendTarget)||gained+C.num(g.heavenlyChips)<budget.cost)return null;
+ const m=C.mini(g,'Bank'),id=c.marketLoan,book=C.mini(g,'Wizard tower');
+ const loan=m?.loanTypes?.[id-1],minOffice=[2,4,5][id-1];
+ if(!loan||m.officeLevel<minOffice||book?.spellsCastTotal!==job.combo.index+1||typeof m.takeLoan!=='function')return null;
+ if(Object.values(g.buffs||{}).some(buff=>/^Loan [1-3](?: \(interest\))?$/.test(buff.name||'')))return null;
+ const active=Object.values(g.buffs||{}).find(buff=>buff.name==='Click frenzy'&&buff.multClick>1);
+ if(!active||C.cpsBuff(g)<7)return null;
+ const fps=C.num(g.fps,30)||30;
+ const frenzy=Object.values(g.buffs||{}).filter(buff=>buff.multCpS>1&&Number.isFinite(buff.time));
+ const seconds=Math.min(active.time/fps,...frenzy.map(buff=>buff.time/fps));
+ const [,multiplier,duration,,,fraction]=loan;
+ const additional=C.num(g.cookiesPs)*(multiplier-1),cost=g.cookies*fraction;
+ if(!Number.isFinite(cost)||cost<=0||g.cookies-cost<C.reserve(g,c,additional)||!Number.isFinite(seconds)||
+    seconds<2||duration*60<seconds+job.prep.length+15||!(clickRate>0))return null;
+ const passive=additional*(1-C.clamp(g.cpsSucked,0,1));
+ const clicks=C.num(g.computedMouseCps)*C.productionClickShare(g)*(multiplier-1)*Math.min(c.rate,clickRate);
+ const projected=(passive+clicks)*seconds;
+ if(!Number.isFinite(projected)||projected<cost*1.5)return null;
+ return{kind:'loan',m,id,cost,reason:'领取贷款 '+id+' · 叠加本次转生爆发'};
+}
 function marketOrder(g,c,hist,ledger){
  const data=C.market(g,hist);
  if(!data)return{reason:'银行升至 1 级解锁股市'};
@@ -934,19 +1109,49 @@ function wrinklerPlan(g,c,managed=''){
  if(managed==='drops'&&target.sucked<=0)return{reason:'等待普通皱纹虫开始储存饼干'};
  return{target,value};
 }
+const dragonRewards=['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear'];
+function dragonCap(g,c,mode){
+ const collectCap=C.has(g,'Pet the dragon')?8:5;
+ return Math.min(c.dragonMax,g.dragonLevels.length-1,mode==='hatch'?5:mode==='collect'?collectCap:Infinity);
+}
+function dragonTrainingTarget(g,c,mode){
+ const level=g.dragonLevel,levels=g.dragonLevels;
+ if(!levels||level<5||level>=dragonCap(g,c,mode))return null;
+ const stock=mode==='collect'?101:100;
+ if(level<levels.length-3){
+  const object=g.ObjectsById?.[level-5];
+  return object?{object,target:stock,label:'养龙训练'}:null;
+ }
+ const target=level===levels.length-3?50:200;
+ const object=g.ObjectsById?.find(item=>item.amount<target&&!item.locked&&!c.blocked.includes('b:'+item.id));
+ return object?{object,target,label:'养龙训练'}:null;
+}
 function dragonPlan(g,c,mode){
  if(!C.has(g,'A crumbly egg')){
   return mode?collectUpgrade(g,c,'A crumbly egg','购买龙蛋','等待龙蛋解锁'):{reason:'等待获得龙蛋'};
  }
- const current=g.dragonLevel,cap=Math.min(c.dragonMax,g.dragonLevels.length-1,mode==='hatch'?5:Infinity);
- if(current>=cap)return{reason:'已达到训练目标 '+cap+' 级'};
+ const reward=mode?rewardPurchase(g,c,dragonRewards,'购买龙掉落',['Dragon teddy bear','Dragon claw','Dragon scale','Dragon fang']):null;
+ if(reward?.kind&&!(c.holdCombo&&C.clickBuff(g)))return reward;
+ const current=g.dragonLevel,cap=dragonCap(g,c,mode);
+ if(current>=cap)return reward||{reason:mode==='collect'&&!C.has(g,'Pet the dragon')?
+  '已孵化 · 等待天堂升级「抚摸龙」':'已达到训练目标 '+cap+' 级'};
+ if(mode&&c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓养龙'};
+ const material=mode&&dragonTrainingTarget(g,c,mode);
+ if(mode==='collect'&&material&&material.object.amount<material.target){
+  return{reason:'训练需要 '+material.target+' 个'+(material.object.dname||material.object.name)+'，保留 1 个'};
+ }
  const step=g.dragonLevels[current],cost=current<5?1000000*2**current:0;
  if(cost&&g.cookies-cost<C.reserve(g,c))return{reason:'训练受到饼干保留线限制'};
  if(!step?.cost?.())return{reason:'等待材料 · '+C.plain(step?.costStr?.())};
  return{kind:'train',current,cap,step,reason:'训练至 '+(current+1)+' 级 · '+C.plain(step.costStr?.())};
 }
 function dragonDrops(g){
- return missingDrops(g,['Dragon scale','Dragon claw','Dragon fang','Dragon teddy bear']);
+ return missingDrops(g,dragonRewards);
+}
+function dragonRewardStatus(g){
+ const unlocked=dragonRewards.filter(name=>!C.has(g,name)&&g.HasUnlocked?.(name)).length;
+ const missing=dragonDrops(g).length;
+ return {missing,unlocked,bought:dragonRewards.length-missing-unlocked};
 }
 function growthAura(g,c){
  if(g.dragonAura||g.dragonLevel<Math.min(c.dragonMax,g.dragonLevels.length-1))return null;
@@ -983,7 +1188,7 @@ function seasonRewards(g){
   valentines:g.heartDrops||[]
  };
 }
-function seasonalPurchase(g,c,names){
+function rewardPurchase(g,c,names,label,priorities=[]){
  const choices=[];
  let protectedName='',specialName='';
  for(const name of new Set(names)){
@@ -999,27 +1204,28 @@ function seasonalPurchase(g,c,names){
   }
   const cost=upgrade.getPrice?.();
   if(!Number.isFinite(cost)||cost<0)continue;
-  const index=prioritySeasonRewards.indexOf(name);
-  choices.push({upgrade,cost,priority:index<0?prioritySeasonRewards.length:index});
+  const index=priorities.indexOf(name);
+  choices.push({upgrade,cost,priority:index<0?priorities.length:index});
  }
  choices.sort((a,b)=>a.priority-b.priority||a.cost-b.cost);
  const budget=g.cookies-C.reserve(g,c);
  const next=choices.find(choice=>choice.cost<=budget);
  if(next){
   const {upgrade,cost}=next;
-  const action=g.heartDrops?.includes(upgrade.name)?'购买情人节饼干':'购买季节奖励';
+  const action=typeof label==='function'?label(upgrade):label;
   return{kind:'buy',upgrade,cost,reason:action+' · '+(upgrade.dname||upgrade.name)};
  }
  const waiting=choices[0]?.upgrade;
  if(waiting)return{reason:'等待购买预算 · '+(waiting.dname||waiting.name)};
- if(protectedName)return{reason:'季节奖励受保护 · '+protectedName};
- if(specialName)return{reason:'可手动购买的季节奖励 · '+specialName};
+ if(protectedName)return{reason:'奖励受保护 · '+protectedName};
+ if(specialName)return{reason:'可手动购买的奖励 · '+specialName};
  return null;
 }
 function seasonPlan(g,c){
  if(['noUpgrade','both'].includes(c.challenge))return{reason:'无升级挑战保护'};
  if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓季节采购和切换'};
- const lists=seasonRewards(g),rewards=seasonalPurchase(g,c,Object.values(lists).flat());
+ const lists=seasonRewards(g),rewards=rewardPurchase(g,c,Object.values(lists).flat(),upgrade=>
+  g.heartDrops?.includes(upgrade.name)?'购买情人节饼干':'购买季节奖励',prioritySeasonRewards);
  if(rewards?.kind)return rewards;
  const groups=[
   {key:'christmas',missing:missingDrops(g,lists.christmas)},
@@ -1048,7 +1254,8 @@ function seasonPlan(g,c){
  const available=groups.filter(group=>group.missing.length&&g.seasons?.[group.key]);
  if(!available.length)return rewards||{reason:'已收集支持的季节掉落'};
  const candidates=available.filter(group=>group.key!=='halloween'||canWrinkle);
- if(!candidates.length)return{reason:'等待老奶奶末日开启，万圣节掉落需要皱纹虫'};
+ if(!candidates.length)return{reason:C.has(g,'Elder Covenant')?'万圣节掉落需要皱纹虫 · 当前长者盟约阻止其出现':
+  '万圣节掉落需要皱纹虫 · 授权研究至「一心」或手动开启老太婆末日'};
  if(C.num(g.seasonUses)>=c.managed.seasonLimit)return{reason:'本轮季节切换已达 '+c.managed.seasonLimit+' 次上限'};
  for(const group of candidates){
   const season=g.seasons[group.key],upgrade=g.Upgrades?.[season.trigger];
@@ -1061,7 +1268,8 @@ function seasonPlan(g,c){
 }
 
 return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
- marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonRewards,seasonPlan,
+ marketOrder,marketDevelopment,marketLoanPlan,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,dragonRewardStatus,
+ growthAura,seasonRewards,seasonPlan,halloweenResearchNeeded,
  heavenlyBudget,ascensionPlan,ascensionCombo,ascensionPrep,ascensionPrepCost,permanentSlots,researchPlan};
 });
 
@@ -1076,7 +1284,9 @@ return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLin
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
 const ASCENT='cookie-pilot:ascent:v3',REBUY='cookie-pilot:rebuy:v3',DIAGNOSTICS='cookie-pilot:activity:v3';
 const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode',
- 'managed','ascendTarget','ascendCombo','comboWait','challenge','protectShiny','background','remember'];
+ 'managed','ascendTarget','ascendCombo','comboWait','challenge','protectShiny','background','remember',
+ 'marketOfficeCap','marketCursorKeep','marketBrokerCap','marketLoan','marketLoanSave','marketBudget',
+ 'gardenAutoSoil','gardenCrop','gardenSpend','harvestBuff'];
 const roundKey=g=>g?.fullDate&&g?.startDate?[g.fullDate,g.startDate,g.seed].join(':'):'';
 function withSpecialMenu(g,tab,fn){
  if(g.specialTab||!g.ToggleSpecialMenu)return fn();
@@ -1548,6 +1758,24 @@ class Engine{
  }
  breed(c,info){
   const g=this.g,plan=M.gardenPlan(g,c,info),tile=plan.tile;
+  if(plan.kind==='soil'||plan.kind==='buy'){
+   this.backup(plan.kind==='soil'?'更换花园土壤前':'购买花园奖励前');
+   if(!this.managedExecution('garden',g))return this.state('plant','花园托管已暂停');
+   const fresh=M.gardenPlan(g,M.execution(g,this.c));
+   if(fresh.kind!==plan.kind||fresh.soil!==plan.soil||fresh.upgrade!==plan.upgrade){
+    return this.state('plant',fresh.reason);
+   }
+   if(fresh.kind==='soil'){
+    if(!this.hooks.nativeClick?.('gardenSoil-'+fresh.soil.id)||info.m.soil!==fresh.soil.id){
+     return this.state('plant','等待原版土壤按钮可用');
+    }
+   }else{
+    fresh.upgrade.buy();
+    if(!C.has(g,fresh.upgrade.name))throw Error('游戏未确认购买花园奖励');
+   }
+   this.log('花园托管 · '+fresh.reason,1);
+   return this.state('plant',fresh.reason);
+  }
   if(!tile)return this.state('plant',plan.reason);
   const field=info.m;
   if(plan.kind==='harvest'){
@@ -1568,7 +1796,11 @@ class Engine{
  }
  trade(c=this.c){
   const g=this.g;
+  const job=this.ascentJob(g),loan=M.marketLoanPlan(g,c,job,this.clickSample.rate);
+  if(loan)return this.developMarket(g,loan,job);
   const {data,orders,reason}=M.marketOrder(g,c,this.hist,this.ledger);
+  const development=M.marketDevelopment(g,c);
+  if(development.kind&&!orders?.some(order=>order.side==='sell'))return this.developMarket(g,development);
   if(!data)return this.state('trade',reason);
   for(const {q} of data.goods){
    const lot=this.ledger[q.id];
@@ -1590,7 +1822,32 @@ class Engine{
     return this.state('trade','已买入 '+q.name);
    }
   }
-  return this.state('trade',reason||'等待游戏确认交易');
+  return this.state('trade',development.reason||reason||'等待游戏确认交易');
+ }
+ developMarket(g,plan,job){
+  this.backup('股市托管花费前',plan.kind!=='broker');
+  if(!this.managedExecution('market',g))return this.state('trade','股市托管已暂停');
+  const c=M.execution(g,this.c);
+  const fresh=plan.kind==='loan'?M.marketLoanPlan(g,c,this.ascentJob(g),this.clickSample.rate):M.marketDevelopment(g,c);
+  if(fresh?.kind!==plan.kind||fresh.m!==plan.m||fresh.id!==plan.id||fresh.quantity!==plan.quantity){
+   return this.state('trade',fresh?.reason||'股市托管条件已变化');
+  }
+  const m=fresh.m;
+  if(fresh.kind==='loan'){
+   this.saveAscent(g,{...job,loanUsed:true});
+   if(!m.takeLoan(fresh.id))return this.state('trade','游戏未确认贷款');
+   g.WriteSave();
+  }else{
+   const office=fresh.kind==='office';
+   const before=office?m.officeLevel:m.brokers;
+   const id=office?'bankOfficeUpgrade':'bankBrokersBuy';
+   if(!this.hooks.nativeClick?.(id)||(office?m.officeLevel:m.brokers)!==before+1){
+    return this.state('trade','等待原版股市按钮可用');
+   }
+   g.WriteSave();
+  }
+  this.log('股市托管 · '+fresh.reason+(fresh.cost?' · 花费 '+C.fmt(fresh.cost):''),1);
+  return this.state('trade',fresh.reason);
  }
  spellPlan(g,c,now=Date.now(),track=false){
   const book=C.mini(g,'Wizard tower');
@@ -1618,6 +1875,7 @@ class Engine{
    if(fresh.reason||fresh.key!==key||fresh.m!==m)return this.state('cast',fresh.reason||'施法条件已变化');
   }
   const before=key==='hand of fate'?new Set(g.shimmers):null;
+  const job=before&&c.marketLoan&&c.marketLoanSave===g.fullDate?this.ascentJob(g):null;
   this.lastCast=now;
   if(!m.castSpell(spell))return this.state('cast','游戏拒绝施法');
   this.log('施放 '+spell.name+' · 剩 '+C.fmt(m.magic)+' 魔力'+(detail?' · '+detail:''),1);
@@ -1626,6 +1884,10 @@ class Engine{
    if(summoned){
     summoned.pop();
     if(summoned.popped||summoned.dead||!g.shimmers.includes(summoned)){
+     if(job?.phase==='prepare'&&job.round===roundKey(g)&&job.combo?.until>now&&
+        job.combo.index+1===m.spellsCastTotal&&g.hasBuff?.('Click frenzy')){
+      this.saveAscent(g,{...job,combo:{...job.combo,triggered:true}});
+     }
      this.picked++;
      this.log('魔法书托管 · 收取本次召唤的金饼干',1);
     }
@@ -1738,7 +2000,10 @@ class Engine{
   const managed=M.modes(g,c).dragon;
   if(!C.has(g,'Pet the dragon')||g.dragonLevel<(managed?8:4))return this.state('pet','等待解锁龙掉落');
   const missing=M.dragonDrops(g);
-  if(!missing.length)return this.state('pet','本轮龙掉落已收集');
+  if(!missing.length){
+   const {unlocked}=M.dragonRewardStatus(g);
+   return this.state('pet',unlocked?'龙掉落全部解锁 · '+unlocked+' 件待购买':'本轮龙掉落已全部购买');
+  }
   if(g.specialTab==='dragon')g.ClickSpecialPic();
   else if(managed&&!g.specialTab&&g.ToggleSpecialMenu)withSpecialMenu(g,'dragon',()=>{
    g.ToggleSpecialMenu(1);
@@ -1753,7 +2018,7 @@ class Engine{
   const g=this.g,mode=M.modes(g,c).dragon;
   const plan=M.dragonPlan(g,c,mode);
   if(!plan.kind)return this.state('dragon',plan.reason);
-  this.backup(plan.kind==='buy'?'购买龙蛋前':'龙升级前');
+  this.backup(plan.kind==='buy'?'购买龙升级前':'龙升级前');
   if(mode){
    if(!this.managedExecution('dragon',g))return this.state('dragon','龙托管已暂停');
    const run=M.execution(g,this.c),fresh=M.dragonPlan(g,run,M.modes(g,run).dragon);
@@ -1761,9 +2026,9 @@ class Engine{
   }
   if(plan.kind==='buy'){
    plan.upgrade.buy();
-   if(!C.has(g,plan.upgrade.name))throw Error('游戏未确认购买龙蛋');
+   if(!C.has(g,plan.upgrade.name))throw Error('游戏未确认购买 '+plan.upgrade.name);
    this.log('养龙托管 · '+plan.reason,1);
-   return this.state('dragon','已购买龙蛋');
+   return this.state('dragon','已购买 '+(plan.upgrade.dname||plan.upgrade.name));
   }
   if(mode)withSpecialMenu(g,'dragon',()=>g.UpgradeDragon());
   else g.UpgradeDragon();
@@ -1792,7 +2057,7 @@ class Engine{
  }
  aura(c=this.c){
   const g=this.g,managed=M.modes(g,c).dragon;
-  if(managed){
+  if(managed&&c.aura0<0&&c.aura1<0){
    const plan=M.growthAura(g,c);
    if(!plan)return this.state('aura','保留现有光环或等待训练完成与牺牲预算');
    this.backup('龙托管配置光环前');
@@ -1928,6 +2193,12 @@ const I=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 const host=document.createElement('div');host.id='cookie-pilot-v2';host.style.cssText='position:fixed;inset:0;z-index:1000000000;pointer-events:none;';const root=host.attachShadow({mode:'open'});(document.body||document.documentElement).append(host);
 const engine=new E.Engine(()=>window.Game,localStorage,{
  hidden:()=>document.hidden,exclusive:()=>!!navigator.locks?.request,
+ nativeClick:id=>{
+  const button=document.getElementById(id);
+  if(!button)return false;
+  button.click();
+  return true;
+ },
  change:()=>{theme();render();},notice:toast
 });
 let page='overview',search='',selectedTile='2,2',destroyed=false,timer,leaseRelease,leasePending=false,leaseEpoch=0,toastTimer,update=null,updateText='尚未检查',checking=false,lab=false,pending=null,liveAt=0,ruleAt=0,checkingAt=0;
@@ -1939,16 +2210,16 @@ const pages=[
 ];
 const planTabs=[['purchase','采购与收益'],['combo','爆发组合'],['lumps','糖块与解锁'],['prestige','转生目标']];
 const managementModules={
- garden:{title:'花园',link:'harvest',modes:[['seeds','培育新种子']],
-  scope:'从当前种子和地块选择亲本、留空突变格、收获新的成熟种子。保护格与已有作物保留。'},
+ garden:{title:'花园',link:'harvest',modes:[['seeds','培育新种子'],['cycle','育种、收藏与收益']],
+  scope:'从当前种子和地块选择亲本、留空突变格并收获。保护格和无关作物保留。'},
  magic:{title:'魔法书',link:'cast',modes:[['combo','优先叠爆发'],['yield','收益与爆发']],
   scope:'预判召唤饼干和命运之手，收取本次法术召唤的金饼干。'},
  pantheon:{title:'万神殿',link:'pantheon',modes:[['lineup','补齐并维持阵容']],
   scope:'保留已在槽的神灵，按当前挂机方式推荐空槽。第一次配置后维持这套阵容，遵守调换次数预留。'},
- market:{title:'股市',link:'trade',modes:[['portfolio','分位交易']],
+ market:{title:'股市',link:'trade',modes:[['portfolio','分位交易'],['development','发展与交易']],
   scope:'积累报价后按分位买卖。多笔订单共用仓位预算，优先退出达到净利目标的已知成本仓位。'},
- dragon:{title:'养龙',link:'dragon',modes:[['hatch','孵化与抚摸'],['develop','训练与主光环']],
-  scope:'按预算购买龙蛋并训练。龙达到 8 级并解锁抚摸后，尝试集齐龙掉落。'},
+ dragon:{title:'养龙',link:'dragon',modes:[['hatch','孵化'],['collect','孵化与收齐掉落'],['develop','训练与主光环']],
+  scope:'按预算购买龙蛋和已解锁掉落。龙达到 8 级并解锁抚摸后，持续收集掉落。'},
  season:{title:'季节收藏',link:'season',modes:[['collection','轮换并收集季节物品']],
   scope:'轮换四个季节、解锁掉落并按预算购买已解锁的普通奖励。优先购买有助于收藏的奖励。独立启用皱纹虫托管时按其方案收取。'},
  wrinklers:{title:'皱纹虫',link:'wrinkler',modes:[['yield','攒收益'],['drops','刷掉落']],
@@ -1958,12 +2229,15 @@ const managementModules={
  purchase:{title:'采购',link:'purchase',modes:[['efficient','按回本采购']],
   scope:'根据实际库存和收益比较建筑与升级，遵守保留线、黑名单和数量上限。'},
  lumps:{title:'糖块',link:'lumpManaged',scope:'成熟收取，按授权路线解锁小游戏和提升建筑等级。'},
- research:{title:'研究与老太婆末日',modes:[['safe','研究到冥界烤箱'],['one-mind','推进到一心'],['full','推进到长者契约'],['pledge','长者契约后自动安抚']],
+ research:{title:'研究与老太婆末日',modes:[['safe','研究到冥界烤箱'],['seasonal','万圣节需要时推进到一心'],['one-mind','推进到一心'],['full','推进到长者契约'],['pledge','长者契约后自动安抚']],
   scope:'依次购买已解锁的研究升级，遵守饼干保留线、黑名单和保险库。开启老太婆末日会改变自然金饼干和皱纹虫。'},
  ascension:{title:'转生',modes:[['notice','声望达标提醒'],['cycle','自动转生与重开']],
   scope:'监测新增声望，达到目标后提醒。'}
 };
 const defaultManagement={events:'idle',purchase:'efficient',garden:'seeds',magic:'combo',pantheon:'lineup',market:'portfolio',dragon:'hatch',wrinklers:'yield'};
+const growthManagement={...defaultManagement,garden:'cycle',market:'development',dragon:'collect',season:'collection',
+ research:'seasonal',ascension:'cycle'};
+const basicGrowthModes={garden:'seeds',market:'portfolio',dragon:'hatch',research:'safe',ascension:'notice'};
 const managementDraft=new Map();
 let managementTab='garden';
 const viewStates=new Map();
@@ -2078,6 +2352,7 @@ function magicPage(g,c){
 function marketPage(g,c){const data=C.market(g,engine.hist);if(!data)return head('股市','价格位置、持仓和条件交易。')+empty('股市尚未解锁','银行升至 1 级后开始采集真实价格样本。');const{m,goods,overhead}=data;return head('股市','价格分位来自本机实际观察；不预测下一次涨跌。',tag('样本上限 2000 / 商品'))+stats([['游戏交易净额','$ '+F(m.profit)],['买入手续费',F((overhead-1)*100)+'%'],['银行办公室',String(m.officeLevel+1)]])+btn('条件交易规则','open-rule','trade','ghost')+`<div class="table-wrap"><table class="table"><thead><tr><th>商品</th><th>价格 / 分位</th><th>持仓 / 成本</th><th>固定买卖线（可选）</th><th>手动</th></tr></thead><tbody>${goods.map(r=>{const t=c.marketThresholds[r.q.id]||{buy:0,sell:0},lot=engine.ledger[r.q.id];return`<tr><td>${esc(r.q.name)}<small>${r.samples} 个样本</small></td><td class="num">$ ${F(r.price)}<small>${r.percentile===null?'尚无样本':F(r.percentile,0)+'% 分位'}</small></td><td class="num">${r.q.stock} / ${r.capacity}<small>${lot?.stock===r.q.stock?'成本 $'+F(lot.cost):'成本未记录'}</small></td><td><div class="actions"><input style="width:70px" type="number" min="0" step="any" data-market="${r.q.id}:buy" value="${t.buy}" aria-label="${esc(r.q.name)}买入价"><input style="width:70px" type="number" min="0" step="any" data-market="${r.q.id}:sell" value="${t.sell}" aria-label="${esc(r.q.name)}卖出价"></div></td><td><div class="actions">${btn('买 1','stock-buy',r.q.id)}${btn('卖出','stock-sell',r.q.id)}</div></td></tr>`;}).join('')}</tbody></table></div>`+note('固定买入线小于卖出线时，该商品改用固定价格条件；两个都填 0 恢复分位策略。银行等级、龙光环或本轮存档改变后重置样本。游戏图表的隐藏状态不影响助手。')+btn('导出本机价格样本','market-export');}
 function growthPage(g,c){
  const dragon=g.dragonLevels?.[g.dragonLevel];
+ const drop=M.dragonRewardStatus(g);
  const wrinklers=(g.wrinklers||[]).filter(w=>w.phase===2&&w.hp>0);
  const rewards=M.seasonRewards(g);
  const seasons=Object.entries(g.seasons||{}).map(([key,season])=>{
@@ -2091,6 +2366,7 @@ function growthPage(g,c){
  });
  return head('长期成长','训练与光环、季节收藏和皱纹虫收益。')+
   block('龙与光环',row('spark','龙等级 '+g.dragonLevel,esc(C.plain(dragon?.action||'等待龙蛋')+' · '+C.plain(dragon?.costStr?.()||'')),btn('训练一级','dragon-manual'))+
+   facts([['龙掉落已买',drop.bought+' / 4'],['已解锁待买',String(drop.unlocked)]])+
    '<div class="actions">'+btn('训练规则','open-rule','dragon','ghost')+btn('光环规则','open-rule','aura','ghost')+btn('抚摸规则','open-rule','pet','ghost')+'</div>')+
   block('皱纹虫',facts([['当前数量',wrinklers.length+' 只'],['估算收益',F(wrinklers.reduce((sum,w)=>sum+C.wrinklerValue(g,w),0))+' 饼干']])+
    '<div class="actions">'+btn('收取普通皱纹虫','wrinklers-manual')+btn('收取规则','open-rule','wrinkler','ghost')+'</div>')+
@@ -2581,8 +2857,11 @@ function nextJobs(g,c){
    item.shortfall>0?'还差 '+F(item.shortfall)+' 饼干 · 按当前被动产速估算':'买后预计保留 '+F(item.keep));
  }
  if(managed.market){
-  const order=M.marketOrder(g,c,engine.hist,engine.ledger).orders?.[0];
-  if(order)add('trade',(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units,0,'股市托管');
+  const orders=M.marketOrder(g,c,engine.hist,engine.ledger).orders||[];
+  const order=orders.find(item=>item.side==='sell')||orders[0];
+  const plan=M.marketLoanPlan(g,c,ascent,engine.clickSample.rate)||M.marketDevelopment(g,c);
+  if(plan.kind==='loan'||plan.kind&&order?.side!=='sell')add('trade',plan.reason,0,'股市托管');
+  else if(order)add('trade',(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units,0,'股市托管');
  }
  if(managed.dragon){
   const plan=M.dragonPlan(g,c,managed.dragon);
@@ -2686,18 +2965,21 @@ function managementNext(g,c,id,choice){
    return plan.reason+(plan.status==='waiting'&&Number.isFinite(plan.seconds)?' · 约 '+T(plan.seconds):'');
   }
   case 'market':{
-   const plan=M.marketOrder(g,run,engine.hist,engine.ledger),order=plan.orders?.[0];
-   return order?(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units:plan.reason;
+   const plan=M.marketOrder(g,run,engine.hist,engine.ledger),order=plan.orders?.find(item=>item.side==='sell')||plan.orders?.[0];
+   const development=M.marketDevelopment(g,run);
+   if(development.kind&&order?.side!=='sell')return development.reason;
+   return order?(order.side==='sell'?'卖出 ':'买入 ')+order.row.q.name+' ×'+order.units:development.reason||plan.reason;
   }
   case 'dragon':{
    const plan=M.dragonPlan(g,run,choice);
    if(plan.kind)return plan.reason;
    const aura=choice==='develop'&&M.growthAura(g,run);
    if(aura)return '配置 '+(aura.aura.dname||aura.aura.name)+' · 牺牲 1 座 '+(aura.highest.dname||aura.highest.name);
-   const missing=M.dragonDrops(g);
+   const drops=M.dragonRewardStatus(g);
    if(g.dragonLevel>=8&&C.has(g,'Pet the dragon')){
-    if(missing.length)return '抚摸龙 · 还缺 '+missing.length+' 件掉落';
-    return '龙掉落已收齐 · '+plan.reason;
+    if(drops.missing)return '抚摸龙 · 还缺 '+drops.missing+' 件掉落';
+    if(drops.unlocked)return '已解锁待买 '+drops.unlocked+' 件 · '+plan.reason;
+    return '龙掉落已买齐 · '+plan.reason;
    }
    return plan.reason;
   }
@@ -2724,17 +3006,27 @@ function managementNext(g,c,id,choice){
 function managedScope(id,choice,c){
  const module=managementModules[id];
  if(id==='dragon')return module.scope+(choice==='develop'?
-  '训练至设定的 '+c.dragonMax+' 级，可能牺牲建筑。达标后可为尚未设置的主光环消耗一座最高阶建筑。':'训练最多至 5 级，先孵化并培养龙。');
+  '训练至设定的 '+c.dragonMax+' 级，可能牺牲建筑。达标后可为尚未设置的主光环消耗一座最高阶建筑。':
+  choice==='collect'?'解锁抚摸后训练到最多 8 级，训练各消耗 100 个指针、老太婆、农场，并为每种留 1 个。':
+   '训练最多至 5 级，先孵化并培养龙。');
+ if(id==='garden'&&choice==='cycle')return module.scope+' 收齐种子后种植对应植物刷掉落，最后按预计收益种植。自动换土会遵守冷却和保护格。';
+ if(id==='market'&&choice==='development')return module.scope+' 会用指针升级办公室至 '+c.marketOfficeCap+
+  ' 级，至少保留 '+c.marketCursorKeep+' 个指针，并按预算雇最多 '+c.marketBrokerCap+' 名经纪人。转生爆发贷款需单独授权。';
  if(id==='season')return module.scope+' 每轮转生最多 '+c.managed.seasonLimit+' 次季节切换。';
  if(id==='magic')return module.scope+(choice==='combo'?'预测到点击狂热时等待生产狂热，超时后恢复日常施法。Haggler’s Charm 可推进序列，反噬时升级价格暂涨 2%。':
   '平时召唤饼干。不合适的序列可用 Haggler’s Charm 推进，反噬时升级价格暂涨 2%。');
  if(id==='research'&&choice==='pledge')return module.scope+' 长者契约后持续安抚。闪光皱纹虫或万圣节待收集时延后。';
+ if(id==='research'&&choice==='seasonal')return module.scope+' 万圣节需要掉落时，推进到「一心」，暂时轮换普通皱纹虫，收齐后恢复原方案。';
  if(id==='ascension'&&choice==='cycle')return '筹码达标后，按总预算补齐临近成就并结算普通皱纹虫。若预测可叠加点击狂热，会按设定最多等一次。之后购买天堂升级、设置永久栏并重开。';
  return module.scope;
 }
-function managementFields(id,c){
+function managementFields(id,c,choice){
  let options='';
  if(id==='garden')options=field('gardenSpend','种植预算（可用饼干 %）','number',{min:0,max:100});
+ if(id==='garden'&&choice==='cycle')options+=
+  select('gardenCrop','收益作物',[['auto','按预计收益选择'],['bakeberry','烘焙浆果'],['queenbeet','女王甜菜'],
+   ['duketater','公爵土豆'],['chocoroot','巧克力根'],['whiteChocoroot','白巧克力根']])+
+  field('harvestBuff','收益收获最低生产倍率','number',{min:1,step:1})+check('gardenAutoSoil','自动切换土壤');
  if(id==='magic')options=field('magicReserve','保留魔力','number',{min:0})+
   field('castCooldown','施法冷却（秒）','number',{min:1,step:1})+
   field('comboWait','等待生产狂热上限（秒）','number',{min:30,max:1800,step:1});
@@ -2748,6 +3040,12 @@ function managementFields(id,c){
   field('marketCap','单项仓位上限','number',{min:1,max:10000,step:1})+
   field('marketBuy','买入分位 ≤ %','number',{min:0,max:49})+
   field('marketSell','卖出分位 ≥ %','number',{min:51,max:100});
+ if(id==='market'&&choice==='development')options+=
+  field('marketOfficeCap','办公室等级上限','number',{min:1,max:6,step:1})+
+  field('marketCursorKeep','升级后保留指针','number',{min:1,max:1000,step:1})+
+  field('marketBrokerCap','经纪人数上限','number',{min:0,max:100,step:1})+
+  select('marketLoan','转生爆发贷款',[[0,'关闭'],[1,'贷 1 · 办公室 3 级'],[2,'贷 2 · 办公室 5 级'],[3,'贷 3 · 办公室 6 级']],
+   c.marketLoanSave===engine.g?.fullDate?c.marketLoan:0);
  if(id==='dragon')options=field('dragonMax','训练等级上限','number',{min:0,max:27,step:1});
  if(id==='events')options=field('rate','连点目标次数 / 秒','number',{min:1,max:40,step:1});
  if(id==='purchase')options=select('reserveMode','饼干保留',reserveModes)+
@@ -2788,7 +3086,9 @@ function managementPage(g,c){
    </div>
    ${note(esc(managedScope(managementTab,choice,c)))}
    ${managementTab==='season'?select('managed-season-limit','本轮季节切换上限',Array.from({length:12},(_,i)=>[i+1,(i+1)+' 次']),c.managed.seasonLimit):''}
-   ${managementFields(managementTab,c)}
+   ${managementTab==='season'&&M.halloweenResearchNeeded(g,preview)&&!C.has(g,'One mind')&&(!active.research||active.research==='safe')?
+    btn('设置万圣节研究衔接','configure-halloween','','ghost'):''}
+   ${managementFields(managementTab,c,choice)}
   </section>
  </div>`;
 }
@@ -3246,10 +3546,13 @@ function confirmManagement(id){
  engine.syncSharedSettings();
  const current=engine.c,catalog=managementModules[id],active=M.modes(g,current);
  const growth=id==='growth',bundle=growth||id==='common';
- const bundleModes=growth?{...defaultManagement,season:'collection',research:'safe',ascension:'cycle'}:defaultManagement;
- const chosen=bundle?Object.fromEntries(Object.entries(bundleModes).filter(([key])=>!active[key]||growth&&key==='ascension'&&active[key]!=='cycle')):
+ const bundleModes=growth?growthManagement:defaultManagement;
+ const choose=(key,selected)=>!selected||(growth&&basicGrowthModes[key]===selected);
+ const chosen=bundle?Object.fromEntries(Object.entries(bundleModes).filter(([key])=>choose(key,active[key]))):
   {[id]:managementDraft.get(id)||active[id]||catalog.modes[0][0]};
- const sugar=growth&&!C.managesLumps(g,current)&&!(current.lumpLevel&&current.lumpGoal?.saveId===saveId);
+ const sugarAvailable=c=>!(C.managesLumps(g,c)&&c.lumpManagedMode==='growth')&&
+  !(c.lumpLevel&&c.lumpGoal?.saveId===saveId);
+ const sugar=growth&&sugarAvailable(current);
  if(!Object.keys(chosen).length&&!sugar){toast('选定玩法已全部加入托管');return;}
  const next={...current,managed:{...current.managed,saveId,modes:{...active,...chosen}}};
  const mode=chosen[id];
@@ -3263,18 +3566,20 @@ function confirmManagement(id){
   ['托管玩法',Object.keys(chosen).map(key=>managementModules[key].title).join('、')],
   ['饼干保留',reserveModes.find(([key])=>key===current.reserveMode)[1]],
   ['股市仓位上限',F(current.marketBudget,0)+'%'],
-  ['养龙范围','孵化，训练最多至 5 级'],
+  ...(chosen.dragon?[['养龙范围',managedScope('dragon',chosen.dragon,current)]]:[]),
   ...(growth?[
    ['跨轮经营','自动备份、转生、购买天堂升级、分配永久栏并重开'],
+   ...(chosen.market?[['股市发展',current.marketOfficeCap+' 级办公室 · 保留 '+current.marketCursorKeep+
+    ' 个指针 · 最多 '+current.marketBrokerCap+' 名经纪人']]:[]),
    ['额外授权',[
-    '开启后台运行与刷新恢复',chosen.season?'按上限切换季节':'',chosen.research?'研究到冥界烤箱':'',
-    sugar?'使用糖块解锁四个小游戏':''
+    '开启后台运行与刷新恢复',chosen.season?'按上限切换季节':'',chosen.research?'万圣节需要时研究至一心并轮换普通皱纹虫':'',
+    chosen.garden?'自动换土、收集并种植收益作物':'',sugar?'使用糖块解锁并扩建花园、发展股市':''
    ].filter(Boolean).join('、')]
   ]:[])
  ]:[['托管目标',catalog.modes.find(([key])=>key===mode)[1]],['预计下一步',managementNext(g,next,id,mode)],
   ...(automatic?[['同意持续运行','开启刷新自动恢复'+(Object.keys(startup).length?'，补上'+Object.keys(startup).map(key=>managementModules[key].title).join('、'):'')]]:[])];
  const message=bundle?'魔法书会为预判到的点击狂热保留魔力。Haggler’s Charm 可推进序列，反噬时升级价格暂涨 2%。'+
-  (growth?'已有的玩法配置继续生效，提醒模式会切换为自动转生。':''):
+  (growth?'确认后启用上面列出的玩法，已选的进阶方案继续生效。':''):
   managedScope(id,mode,current);
  ask(title,{rows,message:message+(engine.paused?'\n点击「继续」后执行。':''),button:'确认托管'},()=>{
   if(!C.compatible(engine.g)||engine.g.fullDate!==saveId)throw Error('存档已变化，请重新确认');
@@ -3282,13 +3587,13 @@ function confirmManagement(id){
   const previous=engine.c.managed,valid=previous.saveId===saveId;
   const selections=valid?{...previous.modes}:{};
   for(const [key,value] of Object.entries(chosen)){
-   if(!bundle||!selections[key]||growth&&key==='ascension')selections[key]=value;
+   if(!bundle||choose(key,selections[key]))selections[key]=value;
   }
   for(const [key,value] of Object.entries(startup))if(!selections[key])selections[key]=value;
-  const sugarStillFree=sugar&&!C.managesLumps(g,engine.c)&&!(engine.c.lumpLevel&&engine.c.lumpGoal?.saveId===saveId);
+  const sugarStillFree=sugar&&sugarAvailable(engine.c);
   engine.set({...(automatic?{remember:true}:{}),
    ...(growth?{background:true}:{}),
-   ...(sugarStillFree?{lumpManaged:true,lumpManagedSave:saveId,lumpManagedMode:'unlocks'}:{}),
+   ...(sugarStillFree?{lumpManaged:true,lumpManagedSave:saveId,lumpManagedMode:'growth'}:{}),
    managed:{...previous,saveId,modes:selections,gods:valid?previous.gods:null}});
   engine.log(title+' · '+Object.keys(chosen).map(key=>managementModules[key].title).join('、'));
   void lease();
@@ -3436,7 +3741,9 @@ root.addEventListener('change',event=>{
    }else apply();
    return;
   }
-  if(key==='dragonMax'&&M.modes(engine.g,engine.c).dragon==='develop'&&Number(value)>engine.c.dragonMax){
+  const dragonMode=key==='dragonMax'&&M.modes(engine.g,engine.c).dragon;
+  const dragonLimit=dragonMode==='develop'?Infinity:dragonMode==='collect'?8:0;
+  if(Math.min(Number(value),dragonLimit)>engine.c.dragonMax){
    const level=C.config({...engine.c,dragonMax:value}).dragonMax;
    el.value=engine.c.dragonMax;
    ask('提高龙训练上限',{rows:[['新目标等级',level+' 级']],message:'后续训练可能消耗建筑。',button:'提高上限'},()=>engine.set({dragonMax:level}));
@@ -3446,6 +3753,33 @@ root.addEventListener('change',event=>{
    el.value=engine.c.lumpManagedMode;
    if(value!==el.value)startLumpManaged(value);
    return;
+  }
+  if(key==='marketLoan'){
+   const saveId=engine.g?.fullDate,id=C.config({...engine.c,marketLoan:value}).marketLoan;
+   if(id===0){engine.set({marketLoan:0,marketLoanSave:0});return;}
+   el.value=engine.c.marketLoanSave===saveId?engine.c.marketLoan:0;
+   ask('授权转生爆发贷款',{
+    rows:[['贷款',String(id)],['立即扣除库存',[20,40,50][id-1]+'%']],
+    message:'只在本存档的转生前点击爆发中使用，每轮最多一次。脚本先核对办公室、库存及预计增益。到期前若未转生，原版会进入减产期。',
+    button:'授权本存档'
+   },()=>{
+    if(!saveId||engine.g?.fullDate!==saveId)throw Error('存档已变，请重新确认');
+    engine.set({marketLoan:id,marketLoanSave:saveId});
+   });
+   return;
+  }
+  if(['marketOfficeCap','marketBrokerCap','marketCursorKeep'].includes(key)&&M.modes(engine.g,engine.c).market==='development'){
+   const saveId=engine.g.fullDate,next=C.config({...engine.c,[key]:value})[key];
+   const raises=key==='marketCursorKeep'?next<engine.c[key]:next>engine.c[key];
+   if(raises){
+    el.value=engine.c[key];
+    ask('扩大股市发展范围',{rows:[[el.getAttribute('aria-label'),String(next)]],
+     message:'办公室升级会消耗指针，雇佣经纪人会花费饼干。',button:'保存额度'},()=>{
+     if(engine.g?.fullDate!==saveId)throw Error('存档已变，请重新确认');
+     engine.set({[key]:next});
+    });
+    return;
+   }
   }
   if(key==='lumpReserve'&&el.value===''){el.value=engine.c.lumpReserve;return;}
   if(key==='lumpLevel'&&value===true){
@@ -3504,6 +3838,12 @@ root.addEventListener('click',async event=>{
  if(action==='configure-ascension'){
   managementTab='ascension';
   managementDraft.set('ascension','cycle');
+  navigate('management');
+  return;
+ }
+ if(action==='configure-halloween'){
+  managementTab='research';
+  managementDraft.set('research','seasonal');
   navigate('management');
   return;
  }

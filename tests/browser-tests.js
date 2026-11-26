@@ -281,7 +281,9 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   const run=window.Game=makePilotFixture('ascension');
   e.setPaused(true);
   try{
-   e.set({managed:{saveId:0,modes:{}},lumpManaged:false,lumpLevel:false,ascendCombo:true});
+   e.set({managed:{saveId:run.fullDate,modes:{ascension:'notice',research:'safe',garden:'seeds',
+    market:'portfolio',dragon:'hatch'}},lumpManaged:true,lumpManagedSave:run.fullDate,lumpManagedMode:'unlocks',
+    lumpLevel:false,ascendCombo:true});
    click('[data-page="planning"]');
    click('[data-action="plan-tab"][data-arg="prestige"]');
    assert(root().getElementById('main').textContent.includes('数字化'),'转生规划未列出可补的成就');
@@ -293,10 +295,28 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    click('[data-action="navigate"][data-arg="management"]');
    click('[data-action="management-growth"]');
    assert(root().getElementById('confirm').open,'未显示自动操作范围');
-   assert(!e.c.managed.modes.ascension,'确认前已启用自动转生');
+   assert(e.c.managed.modes.ascension==='notice'&&e.c.managed.modes.research==='safe','确认前改动了既有托管范围');
    click('#confirm-ok');
    assert(e.c.managed.modes.ascension==='cycle'&&e.c.remember&&e.c.background,'托管、刷新恢复或后台运行未启用');
-   assert(e.c.managed.modes.research==='safe'&&e.c.lumpManagedMode==='unlocks','未应用研究和糖块路线');
+   assert(e.c.managed.modes.research==='seasonal'&&e.c.lumpManagedMode==='growth','未应用研究和糖块路线');
+   assert(e.c.managed.modes.dragon==='collect'&&e.c.managed.modes.garden==='cycle'&&
+    e.c.managed.modes.market==='development'&&e.c.marketLoan===0,'未应用成长路线或错误启用贷款');
+   click('[data-action="manage-module"][data-arg="market"]');
+   click('details[data-state="manage-settings"] summary');
+   const setLoan=value=>{
+    const loan=root().querySelector('select[data-key="marketLoan"]');
+    loan.value=value;
+    loan.dispatchEvent(new Event('change',{bubbles:true}));
+   };
+   setLoan('1');
+   assert(root().getElementById('confirm').open&&e.c.marketLoan===0,'贷款授权之前已启用');
+   click('#confirm-cancel');
+   assert(e.c.marketLoan===0,'取消后贷款已启用');
+   setLoan('1');
+   click('#confirm-ok');
+   assert(e.c.marketLoan===1&&e.c.marketLoanSave===run.fullDate,'贷款未绑定当前存档');
+   setLoan('0');
+   assert(e.c.marketLoan===0&&e.c.marketLoanSave===0,'关闭贷款后仍有授权');
    e.setPaused(false);
    await waitFor(()=>e.locked,'未取得独占锁');
    const now=Date.now();
