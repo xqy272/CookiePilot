@@ -7,7 +7,56 @@ const zh=['指针','老太婆','农场','矿场','工厂','银行','神庙','巫
 names.forEach((name,id)=>{const o={id,name,dname:zh[id],amount:100-id*6,highest:120,baseCps:10**(id/2),storedCps:10**(id/2),level:1,basePrice:15*10**id,locked:false,free:0,tieredUpgrades:{},tieredAchievs:{},synergies:[],minigameLoaded:false,getPrice(){return Math.ceil(this.basePrice*1.15**(this.amount/10));},getSumPrice(n){return Array.from({length:n},(_,i)=>this.getPrice()*1.15**i).reduce((a,b)=>a+b,0);},buy(n=1){if(g.buyMode===-1)throw Error('Unexpected sale');for(let i=0;i<n;i++){const cost=this.getPrice();if(g.cookies<cost)break;g.Spend(cost);this.amount++;g.BuildingsOwned++;g.recalculateGains=1;}},sell(n){n=Math.min(n,this.amount);this.amount-=n;g.cookies+=this.getPrice()*.25*n;g.BuildingsOwned-=n;g.recalculateGains=1;},sacrifice(n){this.amount=Math.max(0,this.amount-n);g.recalculateGains=1;},levelUp(){if(g.lumps>=this.level+1){g.lumps-=this.level+1;this.level++;}},refresh(){}};g.Objects[name]=o;g.ObjectsById.push(o);});g.BuildingsOwned=g.ObjectsById.reduce((s,o)=>s+o.amount,0);
 const upgrade=(name,price,extra={})=>{const u={id:g.UpgradesById.length,name,dname:name,pool:'',bought:0,unlocked:1,basePrice:price,getPrice(){return this.basePrice;},canBuy(){return g.cookies>=this.getPrice();},buy(){if(this.bought||!this.canBuy())return false;g.Spend(this.getPrice());this.bought=1;owned.add(this.name);g.UpgradesInStore=g.UpgradesInStore.filter(x=>x!==this);g.recalculateGains=1;return true;},...extra};g.Upgrades[name]=u;g.UpgradesById.push(u);g.UpgradesInStore.push(u);return u;};
 upgrade('Lucky day',77777777,{dname:'幸运日'});upgrade('Kitten helpers',9000000,{dname:'猫咪助手',kitten:1});upgrade('Plain cookies',1000000,{dname:'原味饼干',pool:'cookie',power:5});upgrade('One mind',100000000,{dname:'同一意识',pool:'tech'});upgrade('Chocolate egg',1000000,{dname:'巧克力蛋'});upgrade('Sugar frenzy',0,{pool:'toggle',priceLumps:1});const tier=upgrade('Cheap hoes',100000,{dname:'便宜的锄头',buildingTie:g.Objects.Farm,tier:1});g.Objects.Farm.tieredUpgrades={1:tier};
-const heaven=upgrade('Legacy',1,{dname:'传承',pool:'prestige',parents:[]});g.UpgradesByPool.prestige=[heaven];
+const heavenly=[
+ ['Legacy',1,'传承'],['Heavenly cookies',3,'天堂饼干','Legacy'],['Heralds',100,'使者','Legacy'],
+ ['How to bake your dragon',9,'烘焙龙高手','Legacy'],['Heavenly luck',77,'天堂幸运','Legacy'],
+ ['Permanent upgrade slot I',100,'永久升级栏位 I','Legacy'],['Tin of british tea biscuits',25,'罐装英式茶饼','Heavenly cookies'],
+ ['Box of macarons',25,'一盒马卡龙','Heavenly cookies'],['Box of brand biscuits',25,'一盒品牌饼干','Heavenly cookies'],
+ ['Tin of butter cookies',25,'罐装黄油饼干','Heavenly cookies'],['Season switcher',1111,'节日转换开关','Heralds'],
+ ['Lasting fortune',777,'持久幸运','Heavenly luck'],['Persistent memory',500,'持久内存','Legacy'],
+ ['Starter kit',50,'新手工具包','Tin of butter cookies']
+];
+for(const [name,price,dname,parent] of heavenly){
+ const item=upgrade(name,price,{dname,pool:'prestige',parents:parent?[g.Upgrades[parent]]:[],unlocked:0,buy(){
+  if(!g.OnAscend||this.bought||!this.canBePurchased||g.heavenlyChips<price)return false;
+  g.heavenlyChips-=price;
+  this.bought=1;
+  this.unlocked=1;
+  owned.add(name);
+  g.BuildAscendTree();
+  return true;
+ }});
+ g.UpgradesByPool.prestige.push(item);
+}
+g.UpgradesInStore=g.UpgradesInStore.filter(item=>item.pool!=='prestige');
+g.permanentUpgrades=[-1,-1,-1,-1,-1];
+g.BuildAscendTree=()=>{
+ for(const item of g.UpgradesByPool.prestige)item.canBePurchased=item.parents.every(parent=>parent.bought);
+};
+g.HowManyCookiesReset=chips=>chips**3*1e12;
+g.resets=0;
+g.Ascend=bypass=>{
+ if(!bypass){g.promptOn=1;return;}
+ const prestige=Math.floor(g.HowMuchPrestige(g.cookiesReset+g.cookiesEarned));
+ g.heavenlyChips+=prestige-Math.floor(g.HowMuchPrestige(g.cookiesReset));
+ g.prestige=prestige;
+ g.OnAscend=1;
+ g.BuildAscendTree();
+};
+g.Reincarnate=bypass=>{
+ if(!bypass){g.promptOn=1;return;}
+ g.OnAscend=0;
+ g.resets++;
+ g.startDate++;
+ g.seed='Fixture run '+g.resets;
+ g.cookiesReset+=g.cookiesEarned;
+ g.cookies=0;
+ g.cookiesEarned=0;
+ g.ObjectsById.forEach(object=>{object.amount=0;});
+ g.BuildingsOwned=0;
+ g.wrinklers=[];
+ g.buffs={};
+};
 g.seasons={christmas:{name:'圣诞节',trigger:'Festive biscuit'},easter:{name:'复活节',trigger:'Bunny biscuit'},halloween:{name:'万圣节',trigger:'Ghostly biscuit'},valentines:{name:'情人节',trigger:'Lovesick biscuit'}};
 for(const[k,s]of Object.entries(g.seasons)){const u=upgrade(s.trigger,1000000,{pool:'toggle',season:k});u.buy=()=>{if(g.cookies<u.getPrice())return false;g.Spend(u.getPrice());g.season=k;return true;};upgrade(k+' cookie',100000,{season:k,pool:'cookie',power:2});}
 g.shimmerTypes={golden:{n:0,minTime:5400,maxTime:18000,time:4300,spawnConditions:()=>true}};
@@ -31,5 +80,16 @@ g.dragonLevels=Array.from({length:28},(_,id)=>({name:'Dragon',action:'训练阶�
 g.fullDate=g.startDate;
 g.wrinklers=Array.from({length:11},(_,id)=>({id,phase:2,hp:3,sucked:1000000*(id+1),type:id===10?1:0}));g.AchievementsById={0:{name:'Builder',dname:'建造者',won:0,desc:'拥有更多建筑。'},1:{name:'Green thumb',dname:'园艺爱好者',won:0,desc:'收获 100 株植物。'}};
 if(stage==='early'){g.cookies=5000;g.cookiesPs=10;g.unbuffedCps=10;g.computedMouseCps=1;g.lumps=-1;g.ObjectsById.forEach((o,i)=>{o.level=0;o.locked=i>3;o.amount=i<2?10:0;});g.dragonLevel=0;owned.clear();}
+if(stage==='ascension'){
+ g.fullDate=g.startDate=1700000000010;
+ g.cookiesReset=0;
+ g.prestige=0;
+ g.heavenlyChips=0;
+ g.cookiesEarned=g.HowManyCookiesReset(741)*1.0000001;
+ g.cookies=150e18;
+ g.Objects.Cursor.amount=187;
+ g.wrinklers=[];
+ g.Upgrades['Kitten helpers'].buy();
+}
 return g;
 });

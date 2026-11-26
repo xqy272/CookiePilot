@@ -1,11 +1,12 @@
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='2.4.0', SUPPORTED='2.058';
+const VERSION='3.0.0', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const MANAGED_MODES={
- events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield'],pantheon:['lineup'],
- market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],ascension:['notice']
+ events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield','combo'],pantheon:['lineup'],
+ market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],
+ research:['safe','one-mind','full','pledge'],ascension:['notice','cycle']
 };
 const LUMP_BAKING_CAP=100;
 const LUMP_UNLOCKS=[
@@ -17,7 +18,7 @@ const LUMP_UNLOCKS=[
 const FARM_TILES=[4,6,9,12,16,20,25,30,36];
 const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',open:false,background:false,remember:false,ads:true,protectVeil:true,alerts:true,sound:false,rate:20,clickMode:'always',reserveMode:'none',reserve:0,holdCombo:true,purchaseMode:'efficient',bridgePurchase:false,target:'',blocked:[],maxBuilding:10000,bulk:1,
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
-spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,
+spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,comboWait:240,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
 lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,lumpManagedSave:0,lumpManagedMode:'growth',
 wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
@@ -36,6 +37,7 @@ function config(input={},startup=false){
  for(const [k,[a,b]]of Object.entries(ranges))c[k]=clamp(input[k],a,b,c[k]);
  for(const k of ['rate','maxBuilding','bulk','marketCap','marketMinSamples','wrinklerKeep','dragonMax','aura0','aura1','swapReserve','godzamokKeep','godzamokSell'])c[k]=Math.floor(c[k]);
  c.lumpReserve=Math.ceil(c.lumpReserve);
+ c.comboWait=Math.round(clamp(input.comboWait,30,1800,c.comboWait));
  c.lumpGoal=lumpGoal(input.lumpGoal);
  if(!c.lumpGoal?.saveId)c.lumpLevel=false;
  if(Number.isSafeInteger(input.lumpManagedSave)&&input.lumpManagedSave>0)c.lumpManagedSave=input.lumpManagedSave;
@@ -73,7 +75,16 @@ function managementConfig(input){
 function migrate(old){return config({...old,click:old.autoClick,purchase:old.autoBuy,deer:old.reindeer,ads:old.adHide,remember:old.rememberAutomation},true);}
 const ready=g=>!!(g?.ready&&typeof g.ClickCookie==='function'&&Number.isFinite(g.cookies));
 const compatible=g=>String(g?.version)===SUPPORTED||g?.cookiePilotTest===true;
-function gate(g,c,e={}){if(!ready(g))return'等待游戏加载';if(!compatible(g))return'游戏版本未验证，自动化已暂停';if(e.paused)return'全部自动化已暂停';if(g.OnAscend||g.AscendTimer>0)return'转生中';if(g.promptOn)return'等待游戏对话框关闭';if(e.hidden&&!c.background)return'后台暂停';if(e.follower)return'另一游戏标签页正在运行';return'';}
+function gate(g,c,e={}){
+ if(!ready(g))return'等待游戏加载';
+ if(!compatible(g))return'游戏版本未验证，自动化已暂停';
+ if(e.paused)return'全部自动化已暂停';
+ if(!e.throughAscension&&(g.OnAscend||g.AscendTimer>0||g.ReincarnateTimer>0))return'转生中';
+ if(g.promptOn)return'等待游戏对话框关闭';
+ if(e.hidden&&!c.background)return'后台暂停';
+ if(e.follower)return'另一游戏标签页正在运行';
+ return'';
+}
 const veil=(g,c)=>c.protectVeil&&has(g,'Shimmering veil [off]');
 const clickBuff=g=>Object.values(g.buffs||{}).some(b=>num(b.multClick,1)>1||b.name==='Cursed finger');
 const cpsBuff=g=>Object.values(g.buffs||{}).reduce((a,b)=>a*num(b.multCpS,1),1);
@@ -96,11 +107,19 @@ const fingers=['Thousand fingers','Million fingers','Billion fingers','Trillion 
 const mice=['Plastic','Iron','Titanium','Adamantium','Unobtainium','Eludium','Wishalloy','Fantasteel','Nevercrack','Armythril','Technobsidian','Plasmarble','Miraculite','Aetherice','Omniplast'].map(x=>x+' mouse');
 const flat={'Specialized chocolate chips':1.01,'Designer cocoa beans':1.02,'Underworld ovens':1.03,'Exotic nuts':1.04,'Arcane sugar':1.05,'Increased merriness':1.15,'Improved jolliness':1.15,'A lump of coal':1.01,'An itchy sweater':1.01,"Santa's dominion":1.2,'Fortune #100':1.01,'Fortune #101':1.07,'Dragon scale':1.03,'Wrinkler ambergris':1.06};
 const useful=new Set(['Lucky day','Serendipity','Get lucky','Heavenly luck','Golden goose egg','Omelette','Fortune cookies']);
+const goldenUpgrades=['Lucky day','Serendipity','Get lucky','Golden goose egg'];
+const prestigePower=['Heavenly chip secret','Heavenly cookie stand','Heavenly bakery','Heavenly confectionery','Heavenly key'];
+function functionalPriority(g,c,name){
+ if((c.golden||c.wrath)&&goldenUpgrades.includes(name))return 100-goldenUpgrades.indexOf(name);
+ if(c.golden&&g.season==='easter'&&name==='Omelette')return 90;
+ if(g.prestige>0&&prestigePower.includes(name))return 80-prestigePower.indexOf(name);
+ return 0;
+}
 const dangerous=new Set(['Chocolate egg','One mind','Communal brainsweep','Elder Pact','Bingo center/Research facility','Elder Pledge','Elder Covenant','Revoke Elder Covenant','Sugar frenzy','Sacrificial rolling pins']);
 function upgradeClass(g,u){
  if(!u||u.bought||!u.unlocked)return'不可购买';if(u.isVaulted?.()||g.vault?.includes(u.id))return'保险库保护';
  if(u.priceLumps>0||u.pool==='prestige'||u.pool==='toggle'||u.pool==='tech'||u.pool==='debug'||u.clickFunction||u.choicesFunction||dangerous.has(u.name))return'特殊操作';
- if(useful.has(u.name))return'功能升级';
+ if(useful.has(u.name)||prestigePower.includes(u.name))return'功能升级';
  if(kittens[u.name]||fingers.includes(u.name)||mice.includes(u.name)||u.name==='Fortune #104'||flat[u.name]||u.buildingTie||u.buildingTie1||u.pool==='cookie'&&typeof u.power==='number'||(g.GrandmaSynergies||[]).includes(u.name)||['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous','Ritual rolling pins','Naughty list','Elderwort biscuits'].includes(u.name))return'收益估算';
  return'需人工判断';
 }
@@ -147,7 +166,9 @@ function purchases(g,c){
  for(const u of g.UpgradesInStore||[]){const cls=upgradeClass(g,u);if(['不可购买','保险库保护'].includes(cls))continue;let price=u.getPrice?.();if(!Number.isFinite(price))continue;const auto=['收益估算','功能升级'].includes(cls);rows.push({id:'u:'+u.id,name:u.dname||u.name,kind:cls,object:u,qty:1,price,...(auto?estimate(g,{upgrade:u}):{delta:0,click:0}),auto});}
  for(const r of rows){
   r.blocked=c.blocked.includes(r.id);
-  r.gain=r.delta+(c.click?r.click*c.rate:0);
+   const clickRate=c.click&&(c.clickMode!=='buff'||clickBuff(g))&&!['noClick','both'].includes(c.challenge)
+    ?clamp(c.effectiveRate,0,c.rate,c.rate):0;
+   r.gain=r.delta+r.click*clickRate;
   r.keep=reserve(g,c,num(r.delta));
   r.shortfall=Math.max(0,r.price+r.keep-g.cookies);
   r.eta=waitTime(r.shortfall,income);
@@ -155,8 +176,10 @@ function purchases(g,c){
   r.score=r.eta+r.pp;
   r.affordable=r.shortfall===0;
   r.priority=c.target===r.id;
+   r.functionPriority=r.kind==='功能升级'?functionalPriority(g,c,r.object.name):0;
  }
- return rows.sort((a,b)=>(b.priority-a.priority)||((a.blocked?1:0)-(b.blocked?1:0))||a.score-b.score||a.price-b.price);
+  return rows.sort((a,b)=>(b.priority-a.priority)||((a.blocked?1:0)-(b.blocked?1:0))||
+   (Number(b.affordable)*(b.functionPriority||0)-Number(a.affordable)*(a.functionPriority||0))||a.score-b.score||a.price-b.price);
 }
 const passiveIncome=g=>Math.max(0,num(g.cookiesPs)*(1-num(g.cpsSucked)));
 const waitTime=(shortfall,income)=>shortfall<=0?0:income>0?shortfall/income:Infinity;
@@ -164,7 +187,8 @@ function purchasePlan(g,c,{rows=purchases(g,c),bridgedTarget=''}={}){
  const noUpgrades=['noUpgrade','both'].includes(c.challenge);
  const eligible=row=>row.auto&&!row.blocked&&(!noUpgrades||row.id.startsWith('b:'));
  const target=c.purchaseMode==='efficient'
-  ?rows.find(row=>eligible(row)&&(row.gain>0||row.priority))
+   ?rows.find(row=>eligible(row)&&(row.gain>0||row.priority||row.affordable&&row.functionPriority>0))||
+    rows.find(row=>eligible(row)&&row.functionPriority>0)
   :rows.find(row=>row.id===c.target);
  if(!target)return{reason:'等待可评估候选或指定目标'};
  if(!eligible(target))return{target,reason:noUpgrades&&target.id.startsWith('u:')?'无升级挑战保护：目标升级已暂停':'目标受保护，需要手动购买'};

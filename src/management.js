@@ -10,7 +10,7 @@
 const ruleOwners={
  click:'events',golden:'events',wrath:'events',deer:'events',fortune:'events',
  purchase:'purchase',harvest:'garden',plant:'garden',cast:'magic',pantheon:'pantheon',
- trade:'market',dragon:'dragon',pet:'dragon',aura:'dragon',season:'season',wrinkler:'wrinklers'
+ trade:'market',dragon:'dragon',pet:'dragon',aura:'dragon',season:'season',wrinkler:'wrinklers',research:'research'
 };
 const moduleForRule=rule=>ruleOwners[rule]||'';
 const configured=c=>Object.keys(c.managed.modes).length>0;
@@ -18,7 +18,8 @@ const modes=(g,c)=>g?.fullDate===c.managed.saveId?c.managed.modes:{};
 const pending=c=>configured(c)||C.AUTO.some(rule=>c[rule]);
 function active(g,c){
  const run=execution(g,c);
- return C.AUTO.some(rule=>run[rule])||!!modes(g,c).ascension;
+ const managed=modes(g,c);
+ return C.AUTO.some(rule=>run[rule])||!!managed.ascension||!!managed.research;
 }
 function owner(g,c,rule){
  const id=ruleOwners[rule],active=modes(g,c);
@@ -70,13 +71,18 @@ function purchasePlan(g,c,options={}){
    if(c.blocked.includes(id))continue;
    const plan=C.purchasePlan(g,{...c,bulk:1,purchaseMode:'target',target:id},
     {bridgedTarget:options.bridgedTarget});
-   if(plan.target)return{...plan,unlock:item.feature};
+   if(plan.next||Number.isFinite(plan.seconds)&&plan.seconds<=120)return{...plan,unlock:item.feature};
   }
+  const plan=C.purchasePlan(g,c,options);
+  if(!plan.next&&c.bulk>1&&g.BuildingsOwned<20){
+   return C.purchasePlan(g,{...c,bulk:1},{bridgedTarget:options.bridgedTarget});
+  }
+  return plan;
  }
  return C.purchasePlan(g,c,options);
 }
 
-function spellPlan(g,c,lastCast,now=Date.now()){
+function spellPlan(g,c,lastCast,now=Date.now(),holdSince=now){
  const m=C.mini(g,'Wizard tower');
  if(!m)return{reason:'巫师塔升至 1 级解锁魔法书'};
  if(C.veil(g,c))return{reason:'面纱保护中'};
@@ -85,9 +91,19 @@ function spellPlan(g,c,lastCast,now=Date.now()){
  const success=(key)=>known(key)&&roll<1-m.getFailChance(known(key));
  const hand='hand of fate',conjure='conjure baked goods',charm="haggler's charm";
  const burst=C.cpsBuff(g)>=7||C.clickBuff(g);
- const forecast=burst&&success(hand)?C.forecast(g,1)[0]:null;
+ const combo=modes(g,c).magic==='combo';
+ const forecast=(burst||combo)&&success(hand)?C.forecast(g,1)[0]:null;
+ const handAffordable=known(hand)&&m.getSpellCost(known(hand))+c.magicReserve<=m.magicM;
+ if(combo&&forecast?.effect==='click frenzy'&&!forecast.fail&&handAffordable){
+  if(C.cpsBuff(g)>=7&&!C.clickBuff(g)){
+   return{...C.castPlan(g,{...c,spell:hand,castCondition:'frenzy',maxFail:100,prediction:false},lastCast,now),
+    key:hand,detail:'生产狂热叠加点击狂热'};
+  }
+  const seconds=Math.max(0,c.comboWait-(now-holdSince)/1000);
+  if(seconds>0)return{seconds,reason:'保留命运之手与魔力，等待生产狂热',holding:true};
+ }
  let key,reason;
- if(forecast?.good&&!forecast.fail&&m.getSpellCost(known(hand))+c.magicReserve<=m.magicM){
+ if(burst&&forecast?.good&&!forecast.fail&&handAffordable&&!(combo&&forecast.effect==='click frenzy'&&C.clickBuff(g))){
   key=hand;
   reason='叠加当前增益，收取本次召唤的金饼干';
  }else if(success(conjure)&&m.getSpellCost(known(conjure))+c.magicReserve<=m.magicM){
@@ -98,6 +114,137 @@ function spellPlan(g,c,lastCast,now=Date.now()){
   reason='推进法术序列'+(success(charm)?'，升级价格降低 2%（1 分钟）':'，升级价格上涨 2%（1 小时）');
  }else return{reason:'等待可用的低风险法术'};
  return{...C.castPlan(g,{...c,spell:key,maxFail:100,castCondition:'mana',prediction:false},lastCast,now),key,detail:reason};
+}
+
+const heavenlyRoutes=[
+ {name:'首转基础',upgrades:['Legacy','Heavenly cookies','Heralds','How to bake your dragon','Heavenly luck',
+  'Permanent upgrade slot I','Tin of british tea biscuits','Box of macarons','Box of brand biscuits','Tin of butter cookies']},
+ {name:'解锁季节',upgrades:['Season switcher']},
+ {name:'延长黄金饼干与加快研究',upgrades:['Lasting fortune','Persistent memory','Starter kit']},
+ {name:'第二永久栏与开局建筑',upgrades:['Permanent upgrade slot II','Starter kitchen','Decisive fate']},
+ {name:'生产折扣与协同',upgrades:['Kitten angels','Divine bakeries','Synergies Vol. I']},
+ {name:'第三永久栏与高级协同',upgrades:['Permanent upgrade slot III','Synergies Vol. II']},
+ {name:'黄金事件与糖块收益',upgrades:['Distilled essence of redoubled luck','Sugar baking']},
+ {name:'第四永久栏',upgrades:['Permanent upgrade slot IV']},
+ {name:'第五永久栏',upgrades:['Permanent upgrade slot V']},
+ {name:'幸运新闻',upgrades:['Fortune cookies']},
+ {name:'龙收藏',upgrades:['Pet the dragon']}
+];
+function heavenlyBudget(g,names){
+ const rows=[],priced=new Set(),visiting=new Set();
+ let cost=0,error='';
+ function add(name){
+  if(error||priced.has(name))return;
+  const upgrade=g.Upgrades?.[name];
+  if(!upgrade||upgrade.pool!=='prestige'||visiting.has(name)){
+   error='无法核对天堂升级及其前置：'+name;
+   return;
+  }
+  if(upgrade.bought||C.has(g,name))return;
+  visiting.add(name);
+  for(const parent of upgrade.parents||[]){
+   if(parent===-1)continue;
+   if(typeof parent==='string')add(parent);
+   else if(parent?.name)add(parent.name);
+   else error='无法核对 '+name+' 的前置';
+  }
+  visiting.delete(name);
+  const price=upgrade.getPrice?.()??upgrade.basePrice;
+  if(!Number.isSafeInteger(price)||price<0||upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||upgrade.showIf){
+   error='天堂升级价格、保护或出现条件需确认：'+(upgrade.dname||name);
+   return;
+  }
+  priced.add(name);
+  rows.push({name,upgrade,price});
+  cost+=price;
+ }
+ for(const name of names)add(name);
+ return{rows,cost,error};
+}
+function ascensionPlan(g,c){
+ const gained=C.prestige(g),balance=C.num(g.heavenlyChips),available=balance+gained;
+ if(g.ascensionMode||c.challenge!=='none')return{gained,available,reason:'挑战保护：暂停自动转生'};
+ const route=heavenlyRoutes.find(step=>step.upgrades.some(name=>!C.has(g,name)&&!g.Upgrades?.[name]?.bought));
+ const names=route?.upgrades||[];
+ const {rows,cost,error}=heavenlyBudget(g,names);
+ const base=Math.floor(C.num(g.HowMuchPrestige?.(g.cookiesReset)));
+ const floor=Math.max(1,Math.ceil(C.num(c.ascendTarget)));
+ const direct=Math.max(floor,cost-balance,route?0:Math.ceil(base*.25));
+ const bridge=!!(route&&!error&&base>=10000&&direct>=base*2&&gained<=direct*.75);
+ const target=bridge?Math.max(floor,Math.ceil(base*.5)):direct;
+ const cookiesAt=g.HowManyCookiesReset?.(base+target);
+ const deficit=Number.isFinite(cookiesAt)?Math.max(0,cookiesAt-C.num(g.cookiesReset)-C.num(g.cookiesEarned)):null;
+ const income=Math.max(0,C.num(g.unbuffedCps,g.cookiesPs)*(1-C.num(g.cpsSucked)));
+ const seconds=deficit!=null&&income>0?deficit/income:Infinity;
+ const name=bridge?'积累声望并保留筹码':route?.name||'继续积累声望';
+ const result={name,names:bridge?[]:names,rows:bridge?[]:rows,cost:bridge?0:cost,gained,available,target,seconds,deficit};
+ if(error)return{...result,reason:error};
+ if(gained<target)return{...result,reason:'等待 '+name+' · 新增声望 '+C.fmt(gained,0)+' / '+C.fmt(target,0)};
+ if(C.clickBuff(g))return{...result,reason:'等待本次点击爆发结束'};
+ if(c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return{...result,reason:'检测到闪光皱纹虫，等待玩家处理'};
+ return{...result,ready:true,reason:'已达 '+name+' · 可以备份并自动转生'};
+}
+function ascensionPrep(g,c){
+ const keep=C.reserve(g,c);
+ const limit=Math.max(0,g.cookies-keep)*.01;
+ const candidates=[];
+ for(const object of g.ObjectsById||[]){
+  if(object.locked||c.blocked.includes('b:'+object.id))continue;
+  const milestones=Object.values(object.tieredAchievs||{})
+   .filter(achievement=>!achievement.won)
+   .map(achievement=>g.Tiers?.[achievement.tier]?.achievUnlock);
+  if(object.name==='Cursor')milestones.push(200);
+  const goal=Math.min(...milestones.filter(n=>n>object.amount&&n<=c.maxBuilding));
+  const quantity=goal-object.amount;
+  if(quantity<=0||quantity>25)continue;
+  const cost=object.getSumPrice?.(quantity);
+  if(Number.isFinite(cost)&&cost>=0&&cost<=limit)candidates.push({object,quantity,cost,goal});
+ }
+ return candidates.sort((a,b)=>a.cost-b.cost).slice(0,3);
+}
+function permanentSlots(g){
+ const slots=g.permanentUpgrades||[];
+ const eligible=(g.UpgradesById||[]).filter(u=>u?.bought&&u.unlocked&&!u.noPerm&&
+  (u.pool===''||u.pool==='cookie')&&u.kitten);
+ const owned=eligible.sort((a,b)=>b.basePrice-a.basePrice||b.id-a.id);
+ for(const [slot,suffix] of ['I','II','III','IV','V'].entries()){
+  if(!C.has(g,'Permanent upgrade slot '+suffix))continue;
+  const existing=g.UpgradesById?.[slots[slot]];
+  const upgrade=owned.find(u=>!slots.includes(u.id));
+  if(upgrade&&(!existing||existing.kitten&&upgrade.basePrice>existing.basePrice))return{slot,upgrade};
+ }
+ return null;
+}
+
+const researchChain=['Bingo center/Research facility','Specialized chocolate chips','Designer cocoa beans',
+ 'Ritual rolling pins','Underworld ovens','One mind','Exotic nuts','Communal brainsweep','Arcane sugar','Elder Pact'];
+function researchPlan(g,c){
+ const mode=modes(g,c).research;
+ if(!mode)return{reason:'研究托管已关闭'};
+ if(g.ascensionMode===1||['noUpgrade','both'].includes(c.challenge))return{reason:'挑战保护：暂停研究采购'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓研究采购'};
+ const length=mode==='safe'?5:mode==='one-mind'?6:researchChain.length;
+ let name=researchChain.slice(0,length).find(key=>!C.has(g,key));
+ if(!name&&mode==='pledge'){
+  if(!g.elderWrath||g.pledgeT>0)return{reason:'安抚生效，等待老太婆恢复愤怒'};
+  if(g.wrinklers?.some(w=>w.type===1&&w.phase>0))return{reason:'闪光皱纹虫保护：暂缓安抚'};
+  const halloweenMissing=missingDrops(g,g.halloweenDrops).length>0;
+  const trigger=g.Upgrades?.[g.seasons?.halloween?.trigger];
+  const canSwitch=modes(g,c).season&&trigger?.unlocked&&!trigger.isVaulted?.()&&C.num(g.seasonUses)<c.managed.seasonLimit;
+  if(halloweenMissing&&(g.season==='halloween'||canSwitch)){
+   return{reason:'等待万圣节皱纹虫掉落'};
+  }
+  name='Elder Pledge';
+ }
+ if(!name)return{reason:'已完成设定的研究阶段'};
+ const upgrade=g.Upgrades?.[name];
+ const display=upgrade?.dname||name;
+ if(!upgrade?.unlocked||upgrade.bought)return{reason:'等待解锁 '+display,seconds:g.researchT>0?g.researchT/(g.fps||30):undefined};
+ if(upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||c.blocked.includes('u:'+upgrade.id))return{reason:'已保护 '+display};
+ const cost=upgrade.getPrice?.(),gap=cost+C.reserve(g,c)-g.cookies;
+ if(!Number.isFinite(cost)||cost<0)return{reason:'无法核对 '+display+' 的价格'};
+ if(gap>0)return{reason:'等待 '+display+' · 缺 '+C.fmt(gap)+' 饼干'};
+ return{upgrade,cost,reason:(name==='Elder Pledge'?'购买安抚：':'采购研究：')+display};
 }
 
 const recipesByGarden=new WeakMap();
@@ -347,5 +494,7 @@ function seasonPlan(g,c){
  return{reason:'等待季节切换器解锁'};
 }
 
-return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan};
+return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
+ marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan,
+ heavenlyBudget,ascensionPlan,ascensionPrep,permanentSlots,researchPlan};
 });

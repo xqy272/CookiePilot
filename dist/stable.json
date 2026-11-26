@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "2.4.0",
+  "version": "3.0.0",
   "channel": "stable",
   "gameVersions": [
     "2.058"
   ],
-  "notes": "加入统一玩法托管，覆盖花园育种、魔法、万神殿、股市、养龙、季节与皱纹虫，按存档显示下一步。",
+  "notes": "自动转生与跨轮经营、研究托管、金饼干爆发、功能升级采购、建筑回购恢复及挂机诊断。",
   "userscript": "https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js",
-  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v2.4.0/CookiePilot-v2.4.0.zip",
-  "sha256": "b942c0e62f08014e6409c5d8a53ca3d03d89bf7cf78c3fa8703f1d8f72c22f61"
+  "zip": "https://github.com/xqy272/CookiePilot/releases/download/v3.0.0/CookiePilot-v3.0.0.zip",
+  "sha256": "04b990c61280838e8f7f48e79cd2f55b38436fba4e73c583e306fe94f016dbb1"
 }

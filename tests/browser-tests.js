@@ -59,7 +59,9 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
    m.freeze=0;m.plants.bakeberry.unlocked=0;m.plot[4][3]=[m.plants.bakeberry.id+1,70];
    page('overview');click('[data-action="navigate"][data-arg="management"]');
    const panel=root().getElementById('main');
-   assert(panel.querySelectorAll('[data-action="manage-module"]').length===11,'托管页没有覆盖各玩法');
+   const modules=[...panel.querySelectorAll('[data-action="manage-module"]')].map(item=>item.dataset.arg);
+   assert(['events','purchase','garden','magic','pantheon','market','dragon','season','wrinklers',
+    'lumps','research','ascension'].every(key=>modules.includes(key)),'托管页没有覆盖各玩法');
    assert(JSON.stringify(root().querySelector('.window').getBoundingClientRect())===bounds,'新增托管页改变面板尺寸');
    click('[data-action="management-common"]');
    assert(root().getElementById('confirm-text').textContent.includes('花园')&&!e.c.managed.modes.garden,'预览组合改变了托管设置');
@@ -274,6 +276,39 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
  await test('实验室正确补给，快照可导入',async()=>{page('storage');g.demoFreeze=true;const before=g.cookies;click('[data-action="grant"][data-arg="1"]');click('#confirm-ok');await delay(50);assert(Math.abs(g.cookies-before-g.unbuffedCps*60)<.1,'补给金额错误');const save=e.backups().find(x=>x.label==='实验室操作前');assert(save,'缺少重点快照');assert(g.ImportSaveCode(save.save),'快照无法导入');assert(Math.abs(g.cookies-before)<.1,'导入不一致');g.demoFreeze=false;});
  await test('广告显示可还原，主题可切换',()=>{e.set({ads:false,theme:'light'});assert(getComputedStyle(document.getElementById('support')).display!=='none','广告样式未撤销');assert(document.getElementById('cookie-pilot-v2').dataset.theme==='light','主题未切换');e.set({ads:true,theme:'dark'});assert(getComputedStyle(document.getElementById('support')).display==='none','未隐藏广告');});
  await test('前期存档显示解锁路径而不报错',()=>{window.Game=makePilotFixture('early');for(const key of['garden','magic','market','growth']){page(key);assert(!root().getElementById('main').textContent.includes('此模块暂时无法读取'),'前期模块错误');}window.Game=g;});
+ await test('全程挂机确认后实际完成首转并恢复经营',async()=>{
+  const previous=structuredClone(e.c),previousPause=e.paused;
+  const run=window.Game=makePilotFixture('ascension');
+  e.setPaused(true);
+  try{
+   e.set({managed:{saveId:0,modes:{}},lumpManaged:false,lumpLevel:false});
+   page('overview');
+   click('[data-action="navigate"][data-arg="management"]');
+   click('[data-action="management-growth"]');
+   assert(root().getElementById('confirm').open,'未显示自动操作范围');
+   assert(!e.c.managed.modes.ascension,'确认前已启用自动转生');
+   click('#confirm-ok');
+   assert(e.c.managed.modes.ascension==='cycle'&&e.c.remember&&e.c.background,'托管、刷新恢复或后台运行未启用');
+   assert(e.c.managed.modes.research==='safe'&&e.c.lumpManagedMode==='unlocks','未应用研究和糖块路线');
+   e.setPaused(false);
+   await waitFor(()=>e.locked,'未取得独占锁');
+   const now=Date.now();
+   e.next={};
+   for(let i=0;i<20;i++)e.pulse(now+1100*i);
+   assert(run.resets===1&&run.heavenlyChips===351,'首转未正确结算');
+   assert(run.permanentUpgrades[0]===run.Upgrades['Kitten helpers'].id,'未设置永久栏');
+   assert(CookiePilotManagement.execution(run,e.c).purchase,'重开后未恢复采购');
+   page('overview');
+   assert(root().querySelector('[aria-label="挂机诊断"]'),'未展示最近成功动作');
+  }finally{
+   e.setPaused(true);
+   e.clearPending(run);
+   e.next={};
+   window.Game=g;
+   e.set(previous);
+   e.setPaused(previousPause);
+  }
+ });
  await test('重复加载不会生成重复入口和工作台',async()=>{await new Promise((res,rej)=>{const s=document.createElement('script');s.src='extension/pilot.bundle.js';s.onload=res;s.onerror=rej;document.body.append(s);});assert(document.querySelectorAll('#cookie-pilot-v2').length===1&&document.querySelectorAll('#cookie-pilot-entry').length===1,'重复注入');});
  await test('卸载清理后可重新加载',async()=>{window.CookiePilot2.destroy();assert(!document.getElementById('cookie-pilot-v2')&&!document.getElementById('cookie-pilot-entry'),'卸载残留');await new Promise((res,rej)=>{const s=document.createElement('script');s.src='extension/pilot.bundle.js';s.onload=res;s.onerror=rej;document.body.append(s);});assert(window.CookiePilot2,'重新加载失败');window.CookiePilot2.engine.set(Object.fromEntries(CookiePilotCore2.AUTO.map(k=>[k,false])));window.CookiePilot2.show();});
  out.textContent+=`\n${passed}/${total} 通过 · 独立模拟存档`;out.dataset.passed=passed;out.dataset.total=total;out.dataset.results=JSON.stringify(checks);button.textContent=`${passed}/${total} 项通过`;button.disabled=false;

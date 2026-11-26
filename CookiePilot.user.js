@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cookie Pilot · 饼干领航员
 // @namespace    https://github.com/xqy272/CookiePilot
-// @version      2.4.0
+// @version      3.0.0
 // @description  全流程 Cookie Clicker 中文助手：现代工作台、采购、花园、法术、股市、成长、存档与在线更新。
 // @author       Cookie Pilot contributors
 // @match        https://orteil.dashnet.org/cookieclicker/
@@ -19,15 +19,16 @@
 // @downloadURL  https://raw.githubusercontent.com/xqy272/CookiePilot/main/dist/stable.user.js
 // ==/UserScript==
 
-/* Cookie Pilot 2.4.0 · MIT · bundled locally; no remote executable code. */
+/* Cookie Pilot 3.0.0 · MIT · bundled locally; no remote executable code. */
 /* Cookie Pilot 2 · MIT · pure analysis, never mutates the game. */
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CookiePilotCore2=api;})(globalThis,function(){
 'use strict';
-const VERSION='2.4.0', SUPPORTED='2.058';
+const VERSION='3.0.0', SUPPORTED='2.058';
 const AUTO=['click','golden','wrath','deer','fortune','purchase','harvest','plant','trade','cast','lump','lumpLevel','lumpManaged','wrinkler','pet','dragon','season','pantheon','aura','godzamok'];
 const MANAGED_MODES={
- events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield'],pantheon:['lineup'],
- market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],ascension:['notice']
+ events:['idle','burst'],purchase:['efficient'],garden:['seeds'],magic:['yield','combo'],pantheon:['lineup'],
+ market:['portfolio'],dragon:['hatch','develop'],season:['collection'],wrinklers:['yield','drops'],
+ research:['safe','one-mind','full','pledge'],ascension:['notice','cycle']
 };
 const LUMP_BAKING_CAP=100;
 const LUMP_UNLOCKS=[
@@ -39,7 +40,7 @@ const LUMP_UNLOCKS=[
 const FARM_TILES=[4,6,9,12,16,20,25,30,36];
 const defaults={schema:2,theme:'system',density:'comfortable',challenge:'none',open:false,background:false,remember:false,ads:true,protectVeil:true,alerts:true,sound:false,rate:20,clickMode:'always',reserveMode:'none',reserve:0,holdCombo:true,purchaseMode:'efficient',bridgePurchase:false,target:'',blocked:[],maxBuilding:10000,bulk:1,
 gardenMode:'seeds',seedA:'bakerWheat',seedB:'thumbcorn',gardenSpend:10,protectedTiles:[],replantLayout:'rows',harvestBuff:1,
-spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,
+spell:'hand of fate',castCondition:'frenzy',maxFail:15,magicReserve:0,prediction:false,predictOnlyGood:true,castCooldown:60,comboWait:240,
 marketBuy:20,marketSell:80,marketBudget:5,marketCap:100,marketMinSamples:30,marketProfit:2,marketThresholds:{},
 lumpReserveMode:'adaptive',lumpReserve:LUMP_BAKING_CAP,lumpGoal:null,lumpManagedSave:0,lumpManagedMode:'growth',
 wrinklerKeep:10,protectShiny:true,dragonMax:27,aura0:-1,aura1:-1,swapReserve:1,gods:[-1,-1,-1],
@@ -58,6 +59,7 @@ function config(input={},startup=false){
  for(const [k,[a,b]]of Object.entries(ranges))c[k]=clamp(input[k],a,b,c[k]);
  for(const k of ['rate','maxBuilding','bulk','marketCap','marketMinSamples','wrinklerKeep','dragonMax','aura0','aura1','swapReserve','godzamokKeep','godzamokSell'])c[k]=Math.floor(c[k]);
  c.lumpReserve=Math.ceil(c.lumpReserve);
+ c.comboWait=Math.round(clamp(input.comboWait,30,1800,c.comboWait));
  c.lumpGoal=lumpGoal(input.lumpGoal);
  if(!c.lumpGoal?.saveId)c.lumpLevel=false;
  if(Number.isSafeInteger(input.lumpManagedSave)&&input.lumpManagedSave>0)c.lumpManagedSave=input.lumpManagedSave;
@@ -95,7 +97,16 @@ function managementConfig(input){
 function migrate(old){return config({...old,click:old.autoClick,purchase:old.autoBuy,deer:old.reindeer,ads:old.adHide,remember:old.rememberAutomation},true);}
 const ready=g=>!!(g?.ready&&typeof g.ClickCookie==='function'&&Number.isFinite(g.cookies));
 const compatible=g=>String(g?.version)===SUPPORTED||g?.cookiePilotTest===true;
-function gate(g,c,e={}){if(!ready(g))return'等待游戏加载';if(!compatible(g))return'游戏版本未验证，自动化已暂停';if(e.paused)return'全部自动化已暂停';if(g.OnAscend||g.AscendTimer>0)return'转生中';if(g.promptOn)return'等待游戏对话框关闭';if(e.hidden&&!c.background)return'后台暂停';if(e.follower)return'另一游戏标签页正在运行';return'';}
+function gate(g,c,e={}){
+ if(!ready(g))return'等待游戏加载';
+ if(!compatible(g))return'游戏版本未验证，自动化已暂停';
+ if(e.paused)return'全部自动化已暂停';
+ if(!e.throughAscension&&(g.OnAscend||g.AscendTimer>0||g.ReincarnateTimer>0))return'转生中';
+ if(g.promptOn)return'等待游戏对话框关闭';
+ if(e.hidden&&!c.background)return'后台暂停';
+ if(e.follower)return'另一游戏标签页正在运行';
+ return'';
+}
 const veil=(g,c)=>c.protectVeil&&has(g,'Shimmering veil [off]');
 const clickBuff=g=>Object.values(g.buffs||{}).some(b=>num(b.multClick,1)>1||b.name==='Cursed finger');
 const cpsBuff=g=>Object.values(g.buffs||{}).reduce((a,b)=>a*num(b.multCpS,1),1);
@@ -118,11 +129,19 @@ const fingers=['Thousand fingers','Million fingers','Billion fingers','Trillion 
 const mice=['Plastic','Iron','Titanium','Adamantium','Unobtainium','Eludium','Wishalloy','Fantasteel','Nevercrack','Armythril','Technobsidian','Plasmarble','Miraculite','Aetherice','Omniplast'].map(x=>x+' mouse');
 const flat={'Specialized chocolate chips':1.01,'Designer cocoa beans':1.02,'Underworld ovens':1.03,'Exotic nuts':1.04,'Arcane sugar':1.05,'Increased merriness':1.15,'Improved jolliness':1.15,'A lump of coal':1.01,'An itchy sweater':1.01,"Santa's dominion":1.2,'Fortune #100':1.01,'Fortune #101':1.07,'Dragon scale':1.03,'Wrinkler ambergris':1.06};
 const useful=new Set(['Lucky day','Serendipity','Get lucky','Heavenly luck','Golden goose egg','Omelette','Fortune cookies']);
+const goldenUpgrades=['Lucky day','Serendipity','Get lucky','Golden goose egg'];
+const prestigePower=['Heavenly chip secret','Heavenly cookie stand','Heavenly bakery','Heavenly confectionery','Heavenly key'];
+function functionalPriority(g,c,name){
+ if((c.golden||c.wrath)&&goldenUpgrades.includes(name))return 100-goldenUpgrades.indexOf(name);
+ if(c.golden&&g.season==='easter'&&name==='Omelette')return 90;
+ if(g.prestige>0&&prestigePower.includes(name))return 80-prestigePower.indexOf(name);
+ return 0;
+}
 const dangerous=new Set(['Chocolate egg','One mind','Communal brainsweep','Elder Pact','Bingo center/Research facility','Elder Pledge','Elder Covenant','Revoke Elder Covenant','Sugar frenzy','Sacrificial rolling pins']);
 function upgradeClass(g,u){
  if(!u||u.bought||!u.unlocked)return'不可购买';if(u.isVaulted?.()||g.vault?.includes(u.id))return'保险库保护';
  if(u.priceLumps>0||u.pool==='prestige'||u.pool==='toggle'||u.pool==='tech'||u.pool==='debug'||u.clickFunction||u.choicesFunction||dangerous.has(u.name))return'特殊操作';
- if(useful.has(u.name))return'功能升级';
+ if(useful.has(u.name)||prestigePower.includes(u.name))return'功能升级';
  if(kittens[u.name]||fingers.includes(u.name)||mice.includes(u.name)||u.name==='Fortune #104'||flat[u.name]||u.buildingTie||u.buildingTie1||u.pool==='cookie'&&typeof u.power==='number'||(g.GrandmaSynergies||[]).includes(u.name)||['Reinforced index finger','Carpal tunnel prevention cream','Ambidextrous','Ritual rolling pins','Naughty list','Elderwort biscuits'].includes(u.name))return'收益估算';
  return'需人工判断';
 }
@@ -169,7 +188,9 @@ function purchases(g,c){
  for(const u of g.UpgradesInStore||[]){const cls=upgradeClass(g,u);if(['不可购买','保险库保护'].includes(cls))continue;let price=u.getPrice?.();if(!Number.isFinite(price))continue;const auto=['收益估算','功能升级'].includes(cls);rows.push({id:'u:'+u.id,name:u.dname||u.name,kind:cls,object:u,qty:1,price,...(auto?estimate(g,{upgrade:u}):{delta:0,click:0}),auto});}
  for(const r of rows){
   r.blocked=c.blocked.includes(r.id);
-  r.gain=r.delta+(c.click?r.click*c.rate:0);
+   const clickRate=c.click&&(c.clickMode!=='buff'||clickBuff(g))&&!['noClick','both'].includes(c.challenge)
+    ?clamp(c.effectiveRate,0,c.rate,c.rate):0;
+   r.gain=r.delta+r.click*clickRate;
   r.keep=reserve(g,c,num(r.delta));
   r.shortfall=Math.max(0,r.price+r.keep-g.cookies);
   r.eta=waitTime(r.shortfall,income);
@@ -177,8 +198,10 @@ function purchases(g,c){
   r.score=r.eta+r.pp;
   r.affordable=r.shortfall===0;
   r.priority=c.target===r.id;
+   r.functionPriority=r.kind==='功能升级'?functionalPriority(g,c,r.object.name):0;
  }
- return rows.sort((a,b)=>(b.priority-a.priority)||((a.blocked?1:0)-(b.blocked?1:0))||a.score-b.score||a.price-b.price);
+  return rows.sort((a,b)=>(b.priority-a.priority)||((a.blocked?1:0)-(b.blocked?1:0))||
+   (Number(b.affordable)*(b.functionPriority||0)-Number(a.affordable)*(a.functionPriority||0))||a.score-b.score||a.price-b.price);
 }
 const passiveIncome=g=>Math.max(0,num(g.cookiesPs)*(1-num(g.cpsSucked)));
 const waitTime=(shortfall,income)=>shortfall<=0?0:income>0?shortfall/income:Infinity;
@@ -186,7 +209,8 @@ function purchasePlan(g,c,{rows=purchases(g,c),bridgedTarget=''}={}){
  const noUpgrades=['noUpgrade','both'].includes(c.challenge);
  const eligible=row=>row.auto&&!row.blocked&&(!noUpgrades||row.id.startsWith('b:'));
  const target=c.purchaseMode==='efficient'
-  ?rows.find(row=>eligible(row)&&(row.gain>0||row.priority))
+   ?rows.find(row=>eligible(row)&&(row.gain>0||row.priority||row.affordable&&row.functionPriority>0))||
+    rows.find(row=>eligible(row)&&row.functionPriority>0)
   :rows.find(row=>row.id===c.target);
  if(!target)return{reason:'等待可评估候选或指定目标'};
  if(!eligible(target))return{target,reason:noUpgrades&&target.id.startsWith('u:')?'无升级挑战保护：目标升级已暂停':'目标受保护，需要手动购买'};
@@ -483,7 +507,7 @@ return{VERSION,SUPPORTED,AUTO,MANAGED_MODES,defaults,config,migrate,num,clamp,ha
 const ruleOwners={
  click:'events',golden:'events',wrath:'events',deer:'events',fortune:'events',
  purchase:'purchase',harvest:'garden',plant:'garden',cast:'magic',pantheon:'pantheon',
- trade:'market',dragon:'dragon',pet:'dragon',aura:'dragon',season:'season',wrinkler:'wrinklers'
+ trade:'market',dragon:'dragon',pet:'dragon',aura:'dragon',season:'season',wrinkler:'wrinklers',research:'research'
 };
 const moduleForRule=rule=>ruleOwners[rule]||'';
 const configured=c=>Object.keys(c.managed.modes).length>0;
@@ -491,7 +515,8 @@ const modes=(g,c)=>g?.fullDate===c.managed.saveId?c.managed.modes:{};
 const pending=c=>configured(c)||C.AUTO.some(rule=>c[rule]);
 function active(g,c){
  const run=execution(g,c);
- return C.AUTO.some(rule=>run[rule])||!!modes(g,c).ascension;
+ const managed=modes(g,c);
+ return C.AUTO.some(rule=>run[rule])||!!managed.ascension||!!managed.research;
 }
 function owner(g,c,rule){
  const id=ruleOwners[rule],active=modes(g,c);
@@ -543,13 +568,18 @@ function purchasePlan(g,c,options={}){
    if(c.blocked.includes(id))continue;
    const plan=C.purchasePlan(g,{...c,bulk:1,purchaseMode:'target',target:id},
     {bridgedTarget:options.bridgedTarget});
-   if(plan.target)return{...plan,unlock:item.feature};
+   if(plan.next||Number.isFinite(plan.seconds)&&plan.seconds<=120)return{...plan,unlock:item.feature};
   }
+  const plan=C.purchasePlan(g,c,options);
+  if(!plan.next&&c.bulk>1&&g.BuildingsOwned<20){
+   return C.purchasePlan(g,{...c,bulk:1},{bridgedTarget:options.bridgedTarget});
+  }
+  return plan;
  }
  return C.purchasePlan(g,c,options);
 }
 
-function spellPlan(g,c,lastCast,now=Date.now()){
+function spellPlan(g,c,lastCast,now=Date.now(),holdSince=now){
  const m=C.mini(g,'Wizard tower');
  if(!m)return{reason:'巫师塔升至 1 级解锁魔法书'};
  if(C.veil(g,c))return{reason:'面纱保护中'};
@@ -558,9 +588,19 @@ function spellPlan(g,c,lastCast,now=Date.now()){
  const success=(key)=>known(key)&&roll<1-m.getFailChance(known(key));
  const hand='hand of fate',conjure='conjure baked goods',charm="haggler's charm";
  const burst=C.cpsBuff(g)>=7||C.clickBuff(g);
- const forecast=burst&&success(hand)?C.forecast(g,1)[0]:null;
+ const combo=modes(g,c).magic==='combo';
+ const forecast=(burst||combo)&&success(hand)?C.forecast(g,1)[0]:null;
+ const handAffordable=known(hand)&&m.getSpellCost(known(hand))+c.magicReserve<=m.magicM;
+ if(combo&&forecast?.effect==='click frenzy'&&!forecast.fail&&handAffordable){
+  if(C.cpsBuff(g)>=7&&!C.clickBuff(g)){
+   return{...C.castPlan(g,{...c,spell:hand,castCondition:'frenzy',maxFail:100,prediction:false},lastCast,now),
+    key:hand,detail:'生产狂热叠加点击狂热'};
+  }
+  const seconds=Math.max(0,c.comboWait-(now-holdSince)/1000);
+  if(seconds>0)return{seconds,reason:'保留命运之手与魔力，等待生产狂热',holding:true};
+ }
  let key,reason;
- if(forecast?.good&&!forecast.fail&&m.getSpellCost(known(hand))+c.magicReserve<=m.magicM){
+ if(burst&&forecast?.good&&!forecast.fail&&handAffordable&&!(combo&&forecast.effect==='click frenzy'&&C.clickBuff(g))){
   key=hand;
   reason='叠加当前增益，收取本次召唤的金饼干';
  }else if(success(conjure)&&m.getSpellCost(known(conjure))+c.magicReserve<=m.magicM){
@@ -571,6 +611,137 @@ function spellPlan(g,c,lastCast,now=Date.now()){
   reason='推进法术序列'+(success(charm)?'，升级价格降低 2%（1 分钟）':'，升级价格上涨 2%（1 小时）');
  }else return{reason:'等待可用的低风险法术'};
  return{...C.castPlan(g,{...c,spell:key,maxFail:100,castCondition:'mana',prediction:false},lastCast,now),key,detail:reason};
+}
+
+const heavenlyRoutes=[
+ {name:'首转基础',upgrades:['Legacy','Heavenly cookies','Heralds','How to bake your dragon','Heavenly luck',
+  'Permanent upgrade slot I','Tin of british tea biscuits','Box of macarons','Box of brand biscuits','Tin of butter cookies']},
+ {name:'解锁季节',upgrades:['Season switcher']},
+ {name:'延长黄金饼干与加快研究',upgrades:['Lasting fortune','Persistent memory','Starter kit']},
+ {name:'第二永久栏与开局建筑',upgrades:['Permanent upgrade slot II','Starter kitchen','Decisive fate']},
+ {name:'生产折扣与协同',upgrades:['Kitten angels','Divine bakeries','Synergies Vol. I']},
+ {name:'第三永久栏与高级协同',upgrades:['Permanent upgrade slot III','Synergies Vol. II']},
+ {name:'黄金事件与糖块收益',upgrades:['Distilled essence of redoubled luck','Sugar baking']},
+ {name:'第四永久栏',upgrades:['Permanent upgrade slot IV']},
+ {name:'第五永久栏',upgrades:['Permanent upgrade slot V']},
+ {name:'幸运新闻',upgrades:['Fortune cookies']},
+ {name:'龙收藏',upgrades:['Pet the dragon']}
+];
+function heavenlyBudget(g,names){
+ const rows=[],priced=new Set(),visiting=new Set();
+ let cost=0,error='';
+ function add(name){
+  if(error||priced.has(name))return;
+  const upgrade=g.Upgrades?.[name];
+  if(!upgrade||upgrade.pool!=='prestige'||visiting.has(name)){
+   error='无法核对天堂升级及其前置：'+name;
+   return;
+  }
+  if(upgrade.bought||C.has(g,name))return;
+  visiting.add(name);
+  for(const parent of upgrade.parents||[]){
+   if(parent===-1)continue;
+   if(typeof parent==='string')add(parent);
+   else if(parent?.name)add(parent.name);
+   else error='无法核对 '+name+' 的前置';
+  }
+  visiting.delete(name);
+  const price=upgrade.getPrice?.()??upgrade.basePrice;
+  if(!Number.isSafeInteger(price)||price<0||upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||upgrade.showIf){
+   error='天堂升级价格、保护或出现条件需确认：'+(upgrade.dname||name);
+   return;
+  }
+  priced.add(name);
+  rows.push({name,upgrade,price});
+  cost+=price;
+ }
+ for(const name of names)add(name);
+ return{rows,cost,error};
+}
+function ascensionPlan(g,c){
+ const gained=C.prestige(g),balance=C.num(g.heavenlyChips),available=balance+gained;
+ if(g.ascensionMode||c.challenge!=='none')return{gained,available,reason:'挑战保护：暂停自动转生'};
+ const route=heavenlyRoutes.find(step=>step.upgrades.some(name=>!C.has(g,name)&&!g.Upgrades?.[name]?.bought));
+ const names=route?.upgrades||[];
+ const {rows,cost,error}=heavenlyBudget(g,names);
+ const base=Math.floor(C.num(g.HowMuchPrestige?.(g.cookiesReset)));
+ const floor=Math.max(1,Math.ceil(C.num(c.ascendTarget)));
+ const direct=Math.max(floor,cost-balance,route?0:Math.ceil(base*.25));
+ const bridge=!!(route&&!error&&base>=10000&&direct>=base*2&&gained<=direct*.75);
+ const target=bridge?Math.max(floor,Math.ceil(base*.5)):direct;
+ const cookiesAt=g.HowManyCookiesReset?.(base+target);
+ const deficit=Number.isFinite(cookiesAt)?Math.max(0,cookiesAt-C.num(g.cookiesReset)-C.num(g.cookiesEarned)):null;
+ const income=Math.max(0,C.num(g.unbuffedCps,g.cookiesPs)*(1-C.num(g.cpsSucked)));
+ const seconds=deficit!=null&&income>0?deficit/income:Infinity;
+ const name=bridge?'积累声望并保留筹码':route?.name||'继续积累声望';
+ const result={name,names:bridge?[]:names,rows:bridge?[]:rows,cost:bridge?0:cost,gained,available,target,seconds,deficit};
+ if(error)return{...result,reason:error};
+ if(gained<target)return{...result,reason:'等待 '+name+' · 新增声望 '+C.fmt(gained,0)+' / '+C.fmt(target,0)};
+ if(C.clickBuff(g))return{...result,reason:'等待本次点击爆发结束'};
+ if(c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return{...result,reason:'检测到闪光皱纹虫，等待玩家处理'};
+ return{...result,ready:true,reason:'已达 '+name+' · 可以备份并自动转生'};
+}
+function ascensionPrep(g,c){
+ const keep=C.reserve(g,c);
+ const limit=Math.max(0,g.cookies-keep)*.01;
+ const candidates=[];
+ for(const object of g.ObjectsById||[]){
+  if(object.locked||c.blocked.includes('b:'+object.id))continue;
+  const milestones=Object.values(object.tieredAchievs||{})
+   .filter(achievement=>!achievement.won)
+   .map(achievement=>g.Tiers?.[achievement.tier]?.achievUnlock);
+  if(object.name==='Cursor')milestones.push(200);
+  const goal=Math.min(...milestones.filter(n=>n>object.amount&&n<=c.maxBuilding));
+  const quantity=goal-object.amount;
+  if(quantity<=0||quantity>25)continue;
+  const cost=object.getSumPrice?.(quantity);
+  if(Number.isFinite(cost)&&cost>=0&&cost<=limit)candidates.push({object,quantity,cost,goal});
+ }
+ return candidates.sort((a,b)=>a.cost-b.cost).slice(0,3);
+}
+function permanentSlots(g){
+ const slots=g.permanentUpgrades||[];
+ const eligible=(g.UpgradesById||[]).filter(u=>u?.bought&&u.unlocked&&!u.noPerm&&
+  (u.pool===''||u.pool==='cookie')&&u.kitten);
+ const owned=eligible.sort((a,b)=>b.basePrice-a.basePrice||b.id-a.id);
+ for(const [slot,suffix] of ['I','II','III','IV','V'].entries()){
+  if(!C.has(g,'Permanent upgrade slot '+suffix))continue;
+  const existing=g.UpgradesById?.[slots[slot]];
+  const upgrade=owned.find(u=>!slots.includes(u.id));
+  if(upgrade&&(!existing||existing.kitten&&upgrade.basePrice>existing.basePrice))return{slot,upgrade};
+ }
+ return null;
+}
+
+const researchChain=['Bingo center/Research facility','Specialized chocolate chips','Designer cocoa beans',
+ 'Ritual rolling pins','Underworld ovens','One mind','Exotic nuts','Communal brainsweep','Arcane sugar','Elder Pact'];
+function researchPlan(g,c){
+ const mode=modes(g,c).research;
+ if(!mode)return{reason:'研究托管已关闭'};
+ if(g.ascensionMode===1||['noUpgrade','both'].includes(c.challenge))return{reason:'挑战保护：暂停研究采购'};
+ if(c.holdCombo&&C.clickBuff(g))return{reason:'点击爆发期间暂缓研究采购'};
+ const length=mode==='safe'?5:mode==='one-mind'?6:researchChain.length;
+ let name=researchChain.slice(0,length).find(key=>!C.has(g,key));
+ if(!name&&mode==='pledge'){
+  if(!g.elderWrath||g.pledgeT>0)return{reason:'安抚生效，等待老太婆恢复愤怒'};
+  if(g.wrinklers?.some(w=>w.type===1&&w.phase>0))return{reason:'闪光皱纹虫保护：暂缓安抚'};
+  const halloweenMissing=missingDrops(g,g.halloweenDrops).length>0;
+  const trigger=g.Upgrades?.[g.seasons?.halloween?.trigger];
+  const canSwitch=modes(g,c).season&&trigger?.unlocked&&!trigger.isVaulted?.()&&C.num(g.seasonUses)<c.managed.seasonLimit;
+  if(halloweenMissing&&(g.season==='halloween'||canSwitch)){
+   return{reason:'等待万圣节皱纹虫掉落'};
+  }
+  name='Elder Pledge';
+ }
+ if(!name)return{reason:'已完成设定的研究阶段'};
+ const upgrade=g.Upgrades?.[name];
+ const display=upgrade?.dname||name;
+ if(!upgrade?.unlocked||upgrade.bought)return{reason:'等待解锁 '+display,seconds:g.researchT>0?g.researchT/(g.fps||30):undefined};
+ if(upgrade.isVaulted?.()||g.vault?.includes(upgrade.id)||c.blocked.includes('u:'+upgrade.id))return{reason:'已保护 '+display};
+ const cost=upgrade.getPrice?.(),gap=cost+C.reserve(g,c)-g.cookies;
+ if(!Number.isFinite(cost)||cost<0)return{reason:'无法核对 '+display+' 的价格'};
+ if(gap>0)return{reason:'等待 '+display+' · 缺 '+C.fmt(gap)+' 饼干'};
+ return{upgrade,cost,reason:(name==='Elder Pledge'?'购买安抚：':'采购研究：')+display};
 }
 
 const recipesByGarden=new WeakMap();
@@ -820,7 +991,9 @@ function seasonPlan(g,c){
  return{reason:'等待季节切换器解锁'};
 }
 
-return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan};
+return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
+ marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan,
+ heavenlyBudget,ascensionPlan,ascensionPrep,permanentSlots,researchPlan};
 });
 
 ;
@@ -832,7 +1005,10 @@ return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLin
 })(globalThis,function(C,M){
 'use strict';
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
-const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode','managed'];
+const ASCENT='cookie-pilot:ascent:v3',REBUY='cookie-pilot:rebuy:v3',DIAGNOSTICS='cookie-pilot:activity:v3';
+const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode',
+ 'managed','ascendTarget','comboWait','challenge','protectShiny','background','remember'];
+const roundKey=g=>g?.fullDate&&g?.startDate?[g.fullDate,g.startDate,g.seed].join(':'):'';
 function withSpecialMenu(g,tab,fn){
  if(g.specialTab||!g.ToggleSpecialMenu)return fn();
  g.specialTab=tab;
@@ -851,6 +1027,13 @@ class Engine{
   this.clickSample={at:Date.now(),total:0,rate:0};
   this.bridgedTarget='';
   this.startupHold=false;
+  this.magicHold=null;
+  this.rebuyRound='';
+  this.rebuyMarker='';
+  this.rebuyTargets=[];
+  this.lastActivity=null;
+  this.lastFailure=null;
+  this.lastDiagnosticWrite=0;
   let saved;try{saved=JSON.parse(storage.getItem(SETTINGS)||'null');if(saved?.schema>2)throw Error('设置来自更新版本');this.c=saved?C.config(saved):C.migrate(JSON.parse(storage.getItem('cookie-pilot:settings:v1')||'{}'));const h=JSON.parse(storage.getItem(HISTORY)||'{}');if(h&&typeof h==='object'){this.hist=h.hist||{};this.ledger=h.ledger||{};this.historyContext=h.context;}
    this.paused=storage.getItem(PAUSE)==='true';
    this.startupHold=!this.paused&&!this.c.remember&&M.pending(this.c);
@@ -860,7 +1043,13 @@ class Engine{
   this.savedVersion=saved?.version||'1';
  }
  get g(){return this.getGame();}
- env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:!this.locked&&M.active(this.g,this.c)};}
+ env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:!this.locked&&this.hasWork()};}
+ hasWork(g=this.g){return M.active(g,this.c)||this.rebuyTargets.length>0;}
+ leaseGate(){
+  const g=this.g;
+  const throughAscension=M.modes(g,this.c).ascension==='cycle'&&!!this.ascentJob(g);
+  return C.gate(g,this.c,{paused:this.paused,hidden:this.hooks.hidden?.(),throughAscension});
+ }
  set(update){this.c=C.config({...this.c,...update});this.persist(update);this.hooks.change?.();}
  setPaused(value){
   this.paused=value;
@@ -893,7 +1082,38 @@ class Engine{
    this.storage.setItem(SETTINGS,JSON.stringify({...this.c,version:C.VERSION}));
   }catch(e){this.paused=true;this.log('设置保存失败，自动化已暂停：'+e.message);}
  }
- log(text,actions=0){this.actions+=actions;this.logs.unshift({at:Date.now(),text});this.logs.length=Math.min(this.logs.length,120);this.hooks.log?.(text);}
+ log(text,actions=0){
+  const at=Date.now();
+  this.actions+=actions;
+  this.logs.unshift({at,text});
+  this.logs.length=Math.min(this.logs.length,120);
+  if(actions>0&&this.g?.fullDate)this.lastActivity={at,text,saveId:this.g.fullDate};
+  this.hooks.log?.(text);
+ }
+ diagnostics(){
+  const saveId=this.g?.fullDate;
+  const current=item=>item&&item.saveId===saveId?item:null;
+  const persisted=this.readRecord(DIAGNOSTICS)||{};
+  return{activity:current(this.lastActivity)||current(persisted.activity),failure:current(this.lastFailure)||current(persisted.failure)};
+ }
+ checkpointDiagnostics(now=Date.now(),force=false){
+  if(!force&&(!this.locked||now-this.lastDiagnosticWrite<15000))return;
+  const {activity,failure}=this.diagnostics();
+  if(!activity&&!failure)return;
+  try{
+   this.storage.setItem(DIAGNOSTICS,JSON.stringify({activity,failure}));
+   this.lastDiagnosticWrite=now;
+  }catch{}
+ }
+ writeFailure(text){
+  this.lastFailure={at:Date.now(),text,saveId:this.g?.fullDate};
+  this.log(text);
+  this.checkpointDiagnostics(Date.now(),true);
+ }
+ readRecord(key){
+  try{return JSON.parse(this.storage.getItem(key)||'null');}
+  catch{return null;}
+ }
  state(k,text){this.states[k]=text;return false;}
  backups(){try{const rows=JSON.parse(this.storage.getItem(BACKUPS)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&typeof x.save==='string'&&Number.isFinite(x.at)).slice(0,15):[];}catch{return[];}}
  backup(label='手动备份',pin=false){const g=this.g;if(!C.ready(g)||g.OnAscend||g.AscendTimer>0)throw Error('游戏未就绪或正在转生');const save=g.WriteSave(1);if(typeof save!=='string'||!save.length||save.length>2000000)throw Error('未取得有效存档');this.backupSerial=(this.backupSerial||0)+1;const entry={id:Date.now()+'-'+this.backupSerial,at:Date.now(),label,save,settings:structuredClone(this.c),pin,version:String(g.version)};const old=this.backups();const pinned=old.filter(x=>x.pin).slice(0,pin?4:5),normal=old.filter(x=>!x.pin).slice(0,9);this.storage.setItem(BACKUPS,JSON.stringify([entry,...pinned,...normal]));this.lastBackup=Date.now();return entry;}
@@ -919,7 +1139,7 @@ class Engine{
    }
    this.state(k,'发生错误，已关闭');
    const name=({lumpLevel:'糖块升级',lumpManaged:'糖块托管',lump:'糖块收取',pantheon:'神灵调换'})[k]||k;
-   this.log(name+' 已停止：'+error.message);
+    this.writeFailure(name+' 已停止：'+error.message);
    return false;
   }
  }
@@ -946,8 +1166,14 @@ class Engine{
  pulse(now=Date.now()){
   if(this.disposed)return;
   if(C.ready(this.g)&&this.savedVersion!==C.VERSION&&!this.g.OnAscend&&!this.g.AscendTimer){try{this.backup('升级前设置与存档',true);this.savedVersion=C.VERSION;this.persist();this.log('已迁移至 '+C.VERSION);}catch(e){this.paused=true;this.state('system','迁移备份失败');}}
-  this.sampleMarket();
-  const active=M.active(this.g,this.c)&&!C.gate(this.g,this.c,this.env());
+   if(now>=(this.next.recovery||0)){
+    this.next.recovery=now+1000;
+    this.loadRebuy();
+    if(this.advancePending(now))return;
+   }
+   if(this.rebuyTargets.length||this.g?.OnAscend&&this.ascentJob(this.g))return;
+   this.sampleMarket();
+   const active=this.hasWork()&&!C.gate(this.g,this.c,this.env());
   const elapsed=now-this.lastPulse;
   if(active&&this.lastPulse&&elapsed>0){
    if(elapsed>1500){
@@ -994,12 +1220,16 @@ class Engine{
    if(M.configured(this.c))this.syncSharedSettings();
    const g=this.g;
    this.checkMilestones(g);
-   for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
+    if(this.considerAscension(g))return;
+    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
     if(k==='lump'&&C.managesLumps(g,this.c))continue;
     if(k==='harvest'&&M.modes(g,this.c).garden)continue;
     const run=M.execution(g,this.c);
-    this.attempt(k,()=>fn.call(this,run),run);
+     const config=k==='research'?{...run,research:!!M.modes(g,this.c).research}:run;
+     this.attempt(k,()=>fn.call(this,run),config);
+     if(this.rebuyTargets.length)break;
    }
+    this.checkpointDiagnostics(now);
   }
   if(C.ready(this.g)&&!this.g.OnAscend&&!this.g.AscendTimer&&!this.g.promptOn&&now-this.lastBackup>=this.c.backupMinutes*60000){try{this.backup('自动快照');}catch(e){this.lastBackup=now;this.log('自动备份失败：'+e.message);}}
  }
@@ -1010,7 +1240,7 @@ class Engine{
    const gods=M.pantheonLineup(g,M.execution(g,this.c));
    if(gods)this.set({managed:{...this.c.managed,gods}});
   }
-  const reached=modes.ascension&&this.c.ascendTarget>0&&C.prestige(g)>=this.c.ascendTarget;
+  const reached=modes.ascension==='notice'&&this.c.ascendTarget>0&&C.prestige(g)>=this.c.ascendTarget;
   const milestone=[g.startDate,this.c.ascendTarget].join(':');
   if(reached&&milestone!==this.ascendNotice){
    this.ascendNotice=milestone;
@@ -1018,6 +1248,154 @@ class Engine{
    this.log(message);
    this.hooks.notice?.(message);
   }
+ }
+ ascentJob(g=this.g){
+  if(!g?.fullDate)return null;
+  const job=this.readRecord(ASCENT+':'+g.fullDate);
+  return job?.saveId===g.fullDate&&typeof job.round==='string'&&Array.isArray(job.names)&&
+   Array.isArray(job.prep)&&['prepare','ascending','buying','restarting'].includes(job.phase)?job:null;
+ }
+ saveAscent(g,job){
+  const key=ASCENT+':'+g.fullDate;
+  if(job)this.storage.setItem(key,JSON.stringify(job));
+  else this.storage.removeItem(key);
+ }
+ clearPending(g=this.g){
+  if(g?.fullDate)this.saveAscent(g,null);
+  if(roundKey(g))this.saveRebuy(g,[],'');
+  this.rebuy=[];
+  this.rebuyTargets=[];
+  this.rebuyRound='';
+ }
+ considerAscension(g){
+  if(M.modes(g,this.c).ascension!=='cycle'||this.ascentJob(g)||C.gate(g,this.c,this.env())||this.readRecord(PAUSE)===true)return false;
+  if(this.c.challenge!=='none')return this.state('ascension','挑战保护：暂停自动转生');
+  if(this.hooks.exclusive?.()===false)return this.state('ascension','自动转生需要浏览器独占锁');
+  const plan=M.ascensionPlan(g,this.c);
+  if(!plan.ready)return this.state('ascension',plan.reason);
+  try{
+   const run=M.execution(g,this.c);
+   const prep=g.buyMode===-1?[]:M.ascensionPrep(g,run).map(row=>({id:row.object.id,goal:row.goal}));
+   this.backup('自动转生前 · '+plan.name,true);
+   const job={saveId:g.fullDate,round:roundKey(g),resets:C.num(g.resets),names:plan.names,
+    name:plan.name,target:plan.target,prep,phase:'prepare'};
+   this.saveAscent(g,job);
+   return this.advanceAscent(g,job);
+  }catch(error){return this.stopForRecovery('自动转生未继续：'+error.message);}
+ }
+ advancePending(){
+  const g=this.g;
+  if(this.readRecord(PAUSE)===true)return this.rebuyTargets.length>0||!!g?.OnAscend;
+  if(this.rebuyTargets.length){
+   if(!C.gate(g,this.c,this.env())){
+    try{this.restoreBuildings();}
+    catch(error){return this.stopForRecovery('建筑回购未继续：'+error.message);}
+   }
+   return true;
+  }
+  const job=this.ascentJob(g);
+  if(!job||!this.syncSharedSettings()||M.modes(g,this.c).ascension!=='cycle')return false;
+  if(C.gate(g,this.c,{...this.env(),throughAscension:true}))return !!(g.OnAscend||g.AscendTimer||g.ReincarnateTimer);
+  if(this.hooks.exclusive?.()===false)return this.state('ascension','自动转生需要浏览器独占锁');
+  try{return this.advanceAscent(g,job);}
+  catch(error){return this.stopForRecovery('自动转生未继续：'+error.message);}
+ }
+ stopForRecovery(message){
+  this.setPaused(true);
+  this.state('system',message);
+  this.writeFailure(message);
+  return true;
+ }
+ advanceAscent(g,job){
+  if(g.AscendTimer>0||g.ReincarnateTimer>0)return true;
+  if(job.round!==roundKey(g)){
+   if(job.phase==='restarting'&&C.num(g.resets)>job.resets){
+    g.WriteSave();
+    this.log('自动转生完成 · '+job.name+' · 已开始下一轮',1);
+    this.state('ascension','已开始下一轮');
+    if(this.states.system?.startsWith('自动转生未继续'))delete this.states.system;
+    this.checkpointDiagnostics(Date.now(),true);
+   }
+   this.saveAscent(g,null);
+   return false;
+  }
+  if(g.OnAscend)return this.finishAscension(g,job);
+  if(g.ascensionMode===1||this.c.challenge!=='none')return this.state('ascension','挑战保护：暂停自动转生');
+  if(C.clickBuff(g))return this.state('ascension','等待本次点击爆发结束');
+  if(this.c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return this.state('ascension','检测到闪光皱纹虫，等待玩家处理');
+  const budget=M.heavenlyBudget(g,job.names);
+  if(budget.error)throw Error(budget.error);
+  const gained=C.prestige(g);
+  if(gained<Math.max(job.target,this.c.ascendTarget)||gained+C.num(g.heavenlyChips)<budget.cost){
+   return this.state('ascension','等待当前存档恢复转生预算');
+  }
+  if(job.prep.length){
+   const [item,...rest]=job.prep;
+   const object=g.ObjectsById?.[item.id],quantity=item.goal-object?.amount;
+   const cost=quantity>0&&object?.getSumPrice?.(quantity);
+   const keep=C.reserve(g,this.c);
+   if(g.buyMode!==-1&&object&&!object.locked&&!this.c.blocked.includes('b:'+object.id)&&
+      item.goal<=this.c.maxBuilding&&quantity>0&&quantity<=25&&Number.isFinite(cost)&&cost>=0&&cost<=(g.cookies-keep)*.01){
+    const previous=object.amount;
+    object.buy(quantity);
+    if(object.amount>previous){
+     g.WriteSave();
+     this.log('转生前补齐 '+(object.dname||object.name)+' ×'+(object.amount-previous),1);
+    }
+   }
+   this.saveAscent(g,{...job,prep:rest});
+   return true;
+  }
+  if(!job.collected){
+   const worms=(g.wrinklers||[]).filter(w=>w.type!==1&&w.phase===2&&w.sucked>0&&w.hp>0);
+   if(worms.length){
+    this.saveAscent(g,{...job,collected:true});
+    for(const worm of worms)worm.hp=0;
+    this.log('转生前结算普通皱纹虫 ×'+worms.length,1);
+    return true;
+   }
+  }
+  if(typeof g.Ascend!=='function'||typeof g.Reincarnate!=='function')throw Error('缺少原版转生入口');
+  g.WriteSave();
+  if(this.rebuyMarker)this.saveRebuy(g,[],'');
+  this.saveAscent(g,{...job,collected:true,phase:'ascending'});
+  g.Ascend(1);
+  if(!g.OnAscend&&!g.AscendTimer)throw Error('游戏未确认进入转生');
+  this.log('自动转生 · '+job.name+' · 新增声望 '+C.fmt(gained,0),1);
+  this.state('ascension','正在进入天堂');
+  return true;
+ }
+ finishAscension(g,job){
+  if(job.phase==='prepare')throw Error('处于手动转生界面，请核对当前任务');
+  if(g.nextAscensionMode||this.c.challenge!=='none')throw Error('当前已选择挑战模式');
+  const {rows,cost,error}=M.heavenlyBudget(g,job.names);
+  if(error||cost>C.num(g.heavenlyChips))throw Error(error||'实际天堂筹码低于已计划预算');
+  if(rows.length){
+   const {upgrade,price}=rows[0];
+   if(!upgrade.canBePurchased||typeof upgrade.buy!=='function')throw Error('暂不能购买 '+(upgrade.dname||upgrade.name));
+   this.saveAscent(g,{...job,phase:'buying'});
+   const before=g.heavenlyChips;
+   upgrade.buy();
+   if(!upgrade.bought||g.heavenlyChips!==before-price)throw Error('天堂升级成交结果与计划不一致');
+   // The original purchase opens the slot picker before the rest of the tree is bought.
+   if(upgrade.name.startsWith('Permanent upgrade slot ')&&g.promptOn&&
+      g.promptL?.querySelector('#promptContentPickPermaUpgrade'))g.ClosePrompt();
+   this.log('天堂升级 · '+(upgrade.dname||upgrade.name)+' · 花费 '+C.fmt(price,0)+' 筹码',1);
+   this.state('ascension','天堂升级还剩 '+(rows.length-1)+' 项');
+   return true;
+  }
+  const choice=M.permanentSlots(g);
+  if(choice){
+   g.permanentUpgrades[choice.slot]=choice.upgrade.id;
+   g.BuildAscendTree?.();
+   this.log('永久栏位 '+(choice.slot+1)+' · '+(choice.upgrade.dname||choice.upgrade.name),1);
+   return true;
+  }
+  this.saveAscent(g,{...job,phase:'restarting'});
+  this.state('ascension','正在开始下一轮');
+  g.Reincarnate(1);
+  if(g.OnAscend)throw Error('游戏未确认开始新一轮');
+  return true;
  }
  purchase(c=this.c){
   const g=this.g;
@@ -1028,7 +1406,9 @@ class Engine{
    this.set({purchaseMode:'efficient',target:''});
    return this.state('purchase','规划升级已完成，等待下一笔采购');
   }
-  const plan=M.purchasePlan(g,c,{bridgedTarget:this.bridgedTarget});
+  const observed=this.clickSample.rate;
+  const run=observed>0?{...c,effectiveRate:observed}:c;
+  const plan=M.purchasePlan(g,run,{bridgedTarget:this.bridgedTarget});
   const item=plan.next;
   if(!item)return this.state('purchase',plan.reason);
   const building=item.id.startsWith('b:');
@@ -1124,14 +1504,22 @@ class Engine{
   }
   return this.state('trade',reason||'等待游戏确认交易');
  }
+ spellPlan(g,c,now=Date.now(),track=false){
+  const book=C.mini(g,'Wizard tower');
+  const key=[roundKey(g),book?.spellsCastTotal,c.managed.modes.magic].join('/');
+  const since=this.magicHold?.key===key?this.magicHold.at:now;
+  const plan=M.spellPlan(g,c,this.lastCast,now,since);
+  if(track&&plan.holding&&this.magicHold?.key!==key)this.magicHold={key,at:now};
+  return plan;
+ }
  cast(c=this.c){
   const g=this.g,managed=M.modes(g,c).magic;
-  const {m,spell,seconds,reason,key,detail}=managed?M.spellPlan(g,c,this.lastCast):C.castPlan(g,c,this.lastCast);
+  const {m,spell,seconds,reason,key,detail}=managed?this.spellPlan(g,c,Date.now(),true):C.castPlan(g,c,this.lastCast);
   if(reason)return this.state('cast',reason+(Number.isFinite(seconds)?' · 约 '+C.time(seconds):''));
   this.backup('施法前');
   if(managed){
    if(!this.managedExecution('magic',g))return this.state('cast','魔法书托管已暂停');
-   const fresh=M.spellPlan(g,M.execution(g,this.c),this.lastCast);
+   const fresh=this.spellPlan(g,M.execution(g,this.c));
    if(fresh.reason||fresh.key!==key||fresh.m!==m)return this.state('cast',fresh.reason||'施法条件已变化');
   }
   const before=key==='hand of fate'?new Set(g.shimmers):null;
@@ -1152,6 +1540,21 @@ class Engine{
  }
  managedExecution(id,g){
   return this.syncSharedSettings()&&!!M.modes(g,this.c)[id]&&!this.spendingGate(g);
+ }
+ research(c=this.c){
+  const g=this.g,plan=M.researchPlan(g,c);
+  if(!plan.upgrade)return this.state('research',plan.reason);
+  this.backup('研究采购前');
+  if(!this.managedExecution('research',g))return this.state('research','研究托管已暂停');
+  const fresh=M.researchPlan(g,M.execution(g,this.c));
+  if(fresh.upgrade!==plan.upgrade)return this.state('research',fresh.reason);
+  const upgrade=fresh.upgrade,pledges=C.num(g.pledges);
+  if(upgrade.name==='One mind')upgrade.buy(1);
+  else upgrade.buy();
+  const applied=upgrade.name==='Elder Pledge'?C.num(g.pledges)>pledges:!!upgrade.bought;
+  if(!applied)return this.state('research','游戏暂未确认 '+(upgrade.dname||upgrade.name));
+  this.log(fresh.reason+' · 花费 '+C.fmt(fresh.cost),1);
+  return this.state('research',fresh.reason);
  }
  lump(managed=false){
   const g=this.g,window=C.lumpWindow(g);
@@ -1340,8 +1743,75 @@ class Engine{
   this.log('季节托管 · '+plan.reason+' · 花费 '+C.fmt(fresh.cost),1);
   return this.state('season',plan.reason);
  }
- godzamok(c=this.c){const g=this.g;if(this.rebuy.length)return this.restoreBuildings();const active=Object.values(g.buffs||{}).find(b=>num(b.multClick,1)>1);if(!active){this.godzamokBuff=null;return this.state('godzamok','等待点击爆发');}if(this.godzamokBuff===active)return this.state('godzamok','本次增益已执行');if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');const list=c.godzamokBuildings.map(id=>g.ObjectsById[Number(id)]).filter(Boolean).map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(x=>x.n>0);if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');const buyback=list.reduce((s,{o,n})=>s+o.getSumPrice(n),0);if(g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');this.backup('Godzamok 出售前',true);this.godzamokBuff=active;this.rebuy=list.map(({o})=>({id:o.id,target:o.amount}));for(const {o,n}of list)o.sell(n,1);this.log('Godzamok 出售已执行，开始回购');this.restoreBuildings();}
- restoreBuildings(){const g=this.g;if(g.buyMode===-1)return this.state('godzamok','等待退出出售模式后回购');const next=this.rebuy[0];if(!next)return;const o=g.ObjectsById[next.id],n=Math.max(0,next.target-o.amount);if(!n){this.rebuy.shift();return;}const cost=o.getSumPrice(n);if(g.cookies-cost<C.reserve(g,this.c))return this.state('godzamok','回购预算不足，采购等待');o.buy(n);if(o.amount>=next.target)this.rebuy.shift();this.state('godzamok',this.rebuy.length?'继续回购':'回购完成');}
+ loadRebuy(g=this.g){
+  const round=roundKey(g);
+  const stored=round?this.readRecord(REBUY+':'+round):null;
+  this.rebuyRound=round;
+  this.rebuyMarker=typeof stored?.buff==='string'?stored.buff:'';
+  this.rebuyTargets=Array.isArray(stored?.items)?stored.items.filter(item=>Number.isSafeInteger(item?.id)&&item.id>=0&&
+   Number.isSafeInteger(item.target)&&item.target>=0&&g.ObjectsById?.[item.id]):[];
+  this.rebuy=this.rebuyTargets.filter(item=>g.ObjectsById[item.id].amount<item.target);
+ }
+ saveRebuy(g,items,buff=this.rebuyMarker){
+  const round=roundKey(g);
+  if(!round)throw Error('无法确认回购所属存档');
+  const key=REBUY+':'+round;
+  if(items.length||buff)this.storage.setItem(key,JSON.stringify({items,buff}));
+  else this.storage.removeItem(key);
+  this.rebuyRound=round;
+  this.rebuyTargets=items;
+  this.rebuy=items;
+  this.rebuyMarker=buff;
+ }
+ godzamok(c=this.c){
+  const g=this.g;
+  if(this.readRecord(PAUSE)===true)return this.state('godzamok','全部自动化已暂停');
+  this.loadRebuy(g);
+  if(this.rebuyTargets.length)return this.restoreBuildings();
+  const [key,active]=Object.entries(g.buffs||{}).find(([,buff])=>num(buff.multClick,1)>1)||[];
+  if(!active){
+   this.godzamokBuff=null;
+   if(this.rebuyMarker)this.saveRebuy(g,[],'');
+   return this.state('godzamok','等待点击爆发');
+  }
+  if(this.godzamokBuff===active||this.rebuyMarker===key)return this.state('godzamok','本次增益已执行');
+  if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');
+  if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');
+  const buildings=[...new Set(c.godzamokBuildings.map(Number))].map(id=>g.ObjectsById[id]).filter(Boolean);
+  const list=buildings.map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(item=>item.n>0);
+  if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');
+  const buyback=list.reduce((sum,{o,n})=>sum+o.getSumPrice(n),0);
+  if(!Number.isFinite(buyback)||g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');
+  this.backup('Godzamok 出售前',true);
+  this.saveRebuy(g,list.map(({o})=>({id:o.id,target:o.amount})),key);
+  this.godzamokBuff=active;
+  for(const {o,n} of list)o.sell(n,1);
+  this.log('Godzamok 出售已执行，开始回购',1);
+  return this.restoreBuildings();
+ }
+ restoreBuildings(){
+  const g=this.g;
+  if(g.buyMode===-1)return this.state('godzamok','等待退出出售模式后回购');
+  if(!this.rebuyTargets.length||this.rebuyRound!==roundKey(g))return false;
+  const next=this.rebuyTargets.find(item=>g.ObjectsById[item.id].amount<item.target);
+  if(next){
+   const object=g.ObjectsById[next.id],quantity=next.target-object.amount;
+   const name=object.dname||object.name,cost=object.getSumPrice(quantity);
+   if(!Number.isFinite(cost)||g.cookies-cost<C.reserve(g,this.c)){
+    return this.state('godzamok','回购还差 '+quantity+' 个'+name+'，等待预算');
+   }
+   const before=object.amount;
+   object.buy(quantity);
+   if(object.amount<next.target)return this.state('godzamok','回购还差 '+(next.target-object.amount)+' 个'+name);
+   this.log('回购 '+name+' ×'+(object.amount-before),1);
+  }
+  this.rebuy=this.rebuyTargets.filter(item=>g.ObjectsById[item.id].amount<item.target);
+  if(this.rebuy.length)return this.state('godzamok','仍有 '+this.rebuy.length+' 项待回购');
+  g.WriteSave();
+  this.saveRebuy(g,[]);
+  if(this.states.system?.startsWith('建筑回购未继续'))delete this.states.system;
+  return this.state('godzamok','回购完成');
+ }
  dispose(){this.disposed=true;}
 }
 const num=C.num;
@@ -1361,7 +1831,10 @@ const esc=C.escape,F=C.fmt,T=C.time;
 const icons={cookie:'M20 12a5 5 0 0 1-6-6 4 4 0 0 1-5-4A10 10 0 1 0 22 15a4 4 0 0 1-2-3ZM7 9h.01M10 16h.01M16 17h.01M6 14h.01',home:'m3 10 9-7 9 7v10H3ZM9 20v-7h6v7',rules:'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6',buy:'M3 3h2l3 12h11l2-8H6M9 20h.01M18 20h.01',leaf:'M19 3C8 2 2 8 5 15s15 3 14-12ZM5 20 16 9',magic:'m4 20 13-13 3 3L7 23ZM4 3v4M2 5h4M17 1v4M15 3h4M21 15v4M19 17h4',market:'M3 3v18h18M7 15l4-5 4 3 6-8',growth:'M12 21V8M7 13l5-5 5 5M5 5h14',save:'M4 3h13l3 3v15H4ZM7 3v6h9V3M8 21v-7h8v7',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2',pause:'M8 5v14M16 5v14',play:'m7 4 14 8-14 8Z',close:'m6 6 12 12M6 18 18 6',spark:'m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z',clock:'M12 8v5l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',shield:'m12 2 8 4v7c0 5-8 9-8 9s-8-4-8-9V6ZM8 12l3 3 5-6',chevron:'m9 5 7 7-7 7',refresh:'M20 7a9 9 0 1 0 1 8M20 2v6h-6',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',flask:'M9 2h6M10 2v7l-6 10v3h16v-3L14 9V2M7 15h10',bell:'M6 17V9a6 6 0 0 1 12 0v8l2 2H4ZM10 22h4'};
 const I=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name]||icons.spark}"/></svg>`;
 const host=document.createElement('div');host.id='cookie-pilot-v2';host.style.cssText='position:fixed;inset:0;z-index:1000000000;pointer-events:none;';const root=host.attachShadow({mode:'open'});(document.body||document.documentElement).append(host);
-const engine=new E.Engine(()=>window.Game,localStorage,{hidden:()=>document.hidden,change:()=>{theme();render();},notice:toast});
+const engine=new E.Engine(()=>window.Game,localStorage,{
+ hidden:()=>document.hidden,exclusive:()=>!!navigator.locks?.request,
+ change:()=>{theme();render();},notice:toast
+});
 let page='overview',search='',selectedTile='2,2',destroyed=false,timer,leaseRelease,leasePending=false,leaseEpoch=0,toastTimer,update=null,updateText='尚未检查',checking=false,lab=false,pending=null,liveAt=0,ruleAt=0,checkingAt=0;
 let leaseInOtherTab=false;
 const urls=new Set(),seen=new WeakSet();let audio=null;
@@ -1373,8 +1846,8 @@ const planTabs=[['purchase','采购与收益'],['combo','爆发组合'],['lumps'
 const managementModules={
  garden:{title:'花园',link:'harvest',modes:[['seeds','培育新种子']],
   scope:'从当前种子和地块选择亲本、留空突变格、收获新的成熟种子。保护格与已有作物保留。'},
- magic:{title:'魔法书',link:'cast',modes:[['yield','收益与爆发']],
-  scope:"平时预测并召唤饼干，增益期间优先用命运之手叠加效果并拾取召唤的金饼干。不合适的序列可用 Haggler’s Charm 推进，反噬时升级价格暂涨 2%。"},
+ magic:{title:'魔法书',link:'cast',modes:[['combo','优先叠爆发'],['yield','收益与爆发']],
+  scope:'预判召唤饼干和命运之手，收取本次法术召唤的金饼干。'},
  pantheon:{title:'万神殿',link:'pantheon',modes:[['lineup','补齐并维持阵容']],
   scope:'保留已在槽的神灵，按当前挂机方式推荐空槽。第一次配置后维持这套阵容，遵守调换次数预留。'},
  market:{title:'股市',link:'trade',modes:[['portfolio','分位交易']],
@@ -1390,10 +1863,12 @@ const managementModules={
  purchase:{title:'采购',link:'purchase',modes:[['efficient','按回本采购']],
   scope:'根据实际库存和收益比较建筑与升级，遵守保留线、黑名单和数量上限。'},
  lumps:{title:'糖块',link:'lumpManaged',scope:'成熟收取，按授权路线解锁小游戏和提升建筑等级。'},
- ascension:{title:'转生提醒',modes:[['notice','声望达标提醒']],
-  scope:'监测新增声望，达到目标时提醒。可从这里查看转生规划并打开游戏确认。'}
+ research:{title:'研究与老太婆末日',modes:[['safe','研究到冥界烤箱'],['one-mind','推进到一心'],['full','推进到长者契约'],['pledge','长者契约后自动安抚']],
+  scope:'依次购买已解锁的研究升级，遵守饼干保留线、黑名单和保险库。开启老太婆末日会改变自然金饼干和皱纹虫。'},
+ ascension:{title:'转生',modes:[['notice','声望达标提醒'],['cycle','自动转生与重开']],
+  scope:'监测新增声望，达到目标后提醒。'}
 };
-const defaultManagement={events:'idle',purchase:'efficient',garden:'seeds',magic:'yield',pantheon:'lineup',market:'portfolio',dragon:'hatch',wrinklers:'yield'};
+const defaultManagement={events:'idle',purchase:'efficient',garden:'seeds',magic:'combo',pantheon:'lineup',market:'portfolio',dragon:'hatch',wrinklers:'yield'};
 const managementDraft=new Map();
 let managementTab='garden';
 const viewStates=new Map();
@@ -1616,7 +2091,7 @@ function activePage(){
 function automationGate(g,c){
  if(engine.startupHold)return'刷新后等待手动继续';
  const env=engine.env();
- const reason=C.gate(g,c,{...env,follower:false});
+ const reason=engine.leaseGate();
  if(reason||!env.follower)return reason;
  return leaseInOtherTab?'另一游戏标签页正在运行':'正在取得挂机执行权';
 }
@@ -1953,6 +2428,15 @@ function nextJobs(g,c){
   if(Number.isFinite(seconds))jobs.push({key,title,seconds:Math.max(0,seconds),detail});
  };
  const managed=M.modes(g,c);
+ const ascent=engine.ascentJob(g);
+ if(ascent&&(g.OnAscend||g.AscendTimer||g.ReincarnateTimer)){
+  add('ascension','完成转生 · '+ascent.name,0,engine.states.ascension||'按顺序完成天堂升级与重开');
+  return jobs;
+ }
+ if(engine.rebuy.length){
+  add('godzamok','回购建筑 · 余 '+engine.rebuy.length+' 项',0,engine.states.godzamok||'先恢复建筑库存');
+  return jobs;
+ }
  if(managed.garden){
   const plan=M.gardenPlan(g,c);
   if(plan.kind)add('plant',plan.reason,plan.seconds,'花园托管');
@@ -1967,8 +2451,9 @@ function nextJobs(g,c){
   if(tile)add('plant','在 '+C.tileName(tile)+' 补种'+tile.plant.name,0,'预计花费 '+F(tile.cost)+' 饼干');
  }
  if(c.cast){
-  const cast=managed.magic?M.spellPlan(g,c,engine.lastCast):C.castPlan(g,c,engine.lastCast);
+  const cast=managed.magic?engine.spellPlan(g,c):C.castPlan(g,c,engine.lastCast);
   if(cast.spell)add('cast','施放'+C.plain(cast.spell.name),cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
+  if(cast.holding)add('cast','等待生产狂热',cast.seconds,'保留当前命运之手序列和魔力 · 显示最长等待');
  }
  if(c.pantheon){
   const plan=C.pantheonPlan(g,c.gods,c.swapReserve);
@@ -2004,6 +2489,14 @@ function nextJobs(g,c){
   const plan=M.seasonPlan(g,c);
   if(plan.kind)add('season',plan.reason,0,'季节托管 · 花费 '+F(plan.cost)+' 饼干');
  }
+ if(managed.research){
+  const plan=M.researchPlan(g,c);
+  add('research',plan.reason,plan.upgrade?0:plan.seconds,plan.upgrade?'研究托管 · 花费 '+F(plan.cost)+' 饼干':'研究倒计时');
+ }
+ if(managed.ascension==='cycle'){
+  const plan=M.ascensionPlan(g,c);
+  if(plan.ready||plan.deficit>0)add('ascension','转生 · '+plan.name,plan.ready?0:plan.seconds,plan.reason);
+ }
  return jobs.sort((a,b)=>a.seconds-b.seconds);
 }
 function protections(g,c){
@@ -2023,16 +2516,20 @@ function protections(g,c){
 }
 function jobRows(jobs,compact){
  return jobs.map(({key,title,seconds,detail})=>
-  `<button type="button" class="next-job" data-action="open-rule" data-arg="${key}">
+  `<button type="button" class="next-job" data-action="${key==='ascension'?'plan-tab':key==='research'?'manage-module':'open-rule'}" data-arg="${key==='ascension'?'prestige':key}">
    <span><strong>${esc(title)}</strong>${compact?'':`<small>${esc(detail)}</small>`}</span>
    <span class="eta">${seconds>0?'约 '+T(seconds):'条件已满足'}</span>${I('chevron')}
   </button>`).join('');
 }
 function runtimeState(g,c){
  const gate=automationGate(g,c),run=M.execution(g,c);
- const count=C.AUTO.filter(key=>run[key]).length+Number(!!M.modes(g,c).ascension);
+ const managed=M.modes(g,c);
+ const count=C.AUTO.filter(key=>run[key]).length+Number(!!managed.ascension)+Number(!!managed.research);
  if(engine.paused)return{label:'已暂停',tone:'warn',message:engine.startupHold?gate:'所有挂机规则已暂停'};
  if(gate)return{label:'等待中',tone:'warn',message:gate};
+ if(engine.ascentJob(g)&&(g.OnAscend||g.AscendTimer||g.ReincarnateTimer))return{label:'自动转生中',tone:'good',message:'正在完成天堂升级和重开'};
+ if(engine.rebuy.length)return{label:'恢复建筑中',tone:'warn',message:engine.states.godzamok||'存在未完成的回购'};
+ if(engine.throttled)return{label:'调度受限',tone:'warn',message:'浏览器拉长了运行间隔'};
  if(!count)return{label:'未启用',tone:'',message:'尚未启用挂机规则'};
  return{label:document.hidden?'后台运行':'运行中',tone:'good',message:'已启用 '+count+' 条规则'};
 }
@@ -2076,7 +2573,7 @@ function managementNext(g,c,id,choice){
  switch(id){
   case 'garden':return M.gardenPlan(g,run).reason;
   case 'magic':{
-   const plan=M.spellPlan(g,run,engine.lastCast);
+   const plan=engine.spellPlan(g,run);
    return plan.reason||'可施放 '+C.plain(plan.spell.name)+' · '+plan.detail;
   }
   case 'pantheon':{
@@ -2102,6 +2599,7 @@ function managementNext(g,c,id,choice){
    return plan.reason;
   }
   case 'season':return M.seasonPlan(g,run).reason;
+  case 'research':return M.researchPlan(g,run).reason;
   case 'wrinklers':{
    const plan=M.wrinklerPlan(g,run,choice);
    return plan.target?'可收取普通皱纹虫 · 估算 '+F(plan.value)+' 饼干':plan.reason;
@@ -2112,7 +2610,11 @@ function managementNext(g,c,id,choice){
    const plan=M.purchasePlan(g,{...run,purchaseMode:'efficient',target:''});
    return plan.next?'可购买 '+plan.next.name+' · '+F(plan.next.price)+' 饼干':plan.reason;
   }
-  case 'ascension':return c.ascendTarget>0?'预计新增 '+F(C.prestige(g),0)+' / '+F(c.ascendTarget,0)+' 声望':'先在转生规划中设定声望目标';
+  case 'ascension':{
+   const job=engine.ascentJob(g);
+   if(choice==='cycle')return job?'正在执行 '+job.name+' · '+(engine.states.ascension||'按游戏实际进度接续'):M.ascensionPlan(g,c).reason;
+   return c.ascendTarget>0?'预计新增 '+F(C.prestige(g),0)+' / '+F(c.ascendTarget,0)+' 声望':'先在转生规划中设定声望目标';
+  }
   default:return C.lumpRoutePlan(g,run).reason;
  }
 }
@@ -2121,13 +2623,19 @@ function managedScope(id,choice,c){
  if(id==='dragon')return module.scope+(choice==='develop'?
   '训练至设定的 '+c.dragonMax+' 级，可能牺牲建筑。达标后可为尚未设置的主光环消耗一座最高阶建筑。':'训练最多至 5 级，先孵化并培养龙。');
  if(id==='season')return module.scope+' 每轮转生最多 '+c.managed.seasonLimit+' 次季节切换。';
+ if(id==='magic')return module.scope+(choice==='combo'?'预测到点击狂热时等待生产狂热，超时后恢复日常施法。Haggler’s Charm 可推进序列，反噬时升级价格暂涨 2%。':
+  '平时召唤饼干。不合适的序列可用 Haggler’s Charm 推进，反噬时升级价格暂涨 2%。');
+ if(id==='research'&&choice==='pledge')return module.scope+' 长者契约后持续安抚。闪光皱纹虫或万圣节待收集时延后。';
+ if(id==='ascension'&&choice==='cycle')return '筹码和最低新增声望达标后，补齐低成本成就并结算普通皱纹虫。备份后自动转生，按路线购买天堂升级，为永久栏选择小猫并重开。刷新后可接续。';
  return module.scope;
 }
 function managementFields(id,c){
  let options='';
  if(id==='garden')options=field('gardenSpend','种植预算（可用饼干 %）','number',{min:0,max:100});
  if(id==='magic')options=field('magicReserve','保留魔力','number',{min:0})+
-  field('castCooldown','施法冷却（秒）','number',{min:1,step:1});
+  field('castCooldown','施法冷却（秒）','number',{min:1,step:1})+
+  field('comboWait','等待生产狂热上限（秒）','number',{min:30,max:1800,step:1});
+ if(id==='ascension')options=field('ascendTarget','最低新增声望','number',{min:0});
  if(id==='pantheon')options=field('swapReserve','保留调换次数','number',{min:0,max:3,step:1});
  if(id==='market')options=field('marketBudget','总仓位预算（可用饼干 %）','number',{min:0,max:100})+
   field('marketMinSamples','最低报价样本数','number',{min:5,max:2000,step:1})+
@@ -2150,12 +2658,12 @@ function managementPage(g,c){
  const preview=choice?{...c,managed:{...c.managed,saveId:g.fullDate,modes:{...active,[managementTab]:choice}}}:c;
  const actions=managementTab==='lumps'?btn('打开糖块托管','sugar-plan','managed','primary'):
   btn(mode&&mode!==choice?'应用新方案':mode?'已开启托管':'开启托管','start-management',managementTab,'primary',
-   !C.compatible(g)||!g.fullDate||mode===choice)+
+   !C.compatible(g)||!g.fullDate||mode===choice||managementTab==='ascension'&&choice==='cycle'&&!navigator.locks?.request)+
   (mode?btn('停止托管','stop-management',managementTab,'ghost'):'');
  const summary=managementNext(g,preview,managementTab,choice);
  return `<div class="rule-heading">
   <h2>玩法托管</h2>
-  <div class="actions">${btn('启用常用组合','management-common','','ghost',!C.compatible(g)||!g.fullDate)}${btn('执行队列','navigate','queue','ghost')}</div>
+   <div class="actions">${btn('启用全程挂机','management-growth','','primary',!C.compatible(g)||!g.fullDate||!navigator.locks?.request)}${btn('启用常用组合','management-common','','ghost',!C.compatible(g)||!g.fullDate)}${btn('执行队列','navigate','queue','ghost')}</div>
  </div>
  ${M.configured(c)&&c.managed.saveId!==g.fullDate?note('存档已切换。请在当前存档重新确认托管。'):''}
  <div class="management-layout">
@@ -2170,7 +2678,8 @@ function managementPage(g,c){
    <div class="route-next"><strong>下一步</strong><p>${esc(mode&&automationGate(g,c)||summary||'等待规则条件满足')}</p></div>
    <div class="actions">${actions}
     ${managementTab==='garden'?btn('查看地块','navigate','garden','ghost'):
-     module.link?btn('查看规则','open-rule',module.link,'ghost'):btn('调整声望目标','plan-tab','prestige','ghost')}
+     module.link?btn('查看规则','open-rule',module.link,'ghost'):
+      managementTab==='ascension'?btn('调整声望目标','plan-tab','prestige','ghost'):''}
    </div>
    ${note(esc(managedScope(managementTab,choice,c)))}
    ${managementTab==='season'?select('managed-season-limit','本轮季节切换上限',Array.from({length:12},(_,i)=>[i+1,(i+1)+' 次']),c.managed.seasonLimit):''}
@@ -2184,6 +2693,7 @@ function compactOverview(g,c){
  const [first,...rest]=protections(g,run);
  const enabled=M.active(g,c);
  const suggestion=nextSetup(g,run);
+ const inspection=status.tone==='warn'?status.message:engine.states.system||'';
  return `<div class="overview">
   <div class="overview-heading"><h2>挂机总览</h2><div class="actions">
    ${btn('玩法托管','navigate','management','primary')}
@@ -2194,6 +2704,7 @@ function compactOverview(g,c){
    <div class="card-title"><h3>下一步</h3>${enabled?'':btn('查看队列','navigate','queue','ghost')}</div>
    ${jobs.length?jobRows(jobs.slice(0,2),true):note(esc(status.tone==='good'?'等待自然事件或已启用规则的条件满足。':status.message+'。'))}
   </section>
+  ${activityDiagnostics(inspection)}
   ${first?`<button type="button" class="guard-summary" data-action="open-rule" data-arg="${first.key}">
    ${I('shield')}<span><strong>${esc(first.title)}</strong> · ${esc(first.text)}</span>
    ${rest.length?`<small>另 ${rest.length} 项</small>`:I('chevron')}</button>`:''}
@@ -2218,6 +2729,16 @@ function queuePage(g,c){
 function logsPage(){
  return head('操作记录','本轮生效点击 '+F(engine.clicks,0)+' · 事件拾取 '+F(engine.picked,0)+' · 动作 '+F(engine.actions,0))+
   (engine.logs.map(entry=>`<div class="log"><time>${new Date(entry.at).toLocaleTimeString('zh-CN',{hour12:false})}</time><span>${esc(entry.text)}</span></div>`).join('')||note('尚无操作记录。'));
+}
+function activityDiagnostics(blocker=''){
+ const {activity,failure}=engine.diagnostics();
+ if(!blocker&&!activity&&!failure)return'';
+ const summarize=item=>new Date(item.at).toLocaleTimeString('zh-CN',{hour12:false})+' · '+item.text;
+ return `<section class="rule-card runtime-detail" aria-label="挂机诊断">${facts([
+  ...(blocker?[['当前阻塞',blocker]]:[]),
+  ...(activity?[['最近成功',summarize(activity)]]:[]),
+  ...(failure?[['最近异常',summarize(failure)]]:[])
+ ])}</section>`;
 }
 function planningPage(g,c){
  let detail;
@@ -2417,7 +2938,14 @@ function prestigePlanning(g,c){
  const chosen=upgrades.find(u=>String(u.id)===c.heavenlyTarget);
  const price=chosen?C.num(chosen.getPrice?.(),C.num(chosen.basePrice)):0;
  const missing=Object.values(g.AchievementsById||{}).filter(a=>a&&!a.won&&a.pool!=='shadow').slice(0,35);
- return block('声望与天堂升级预算',`<div class="fields">
+ const job=engine.ascentJob(g),plan=M.ascensionPlan(g,c),mode=M.modes(g,c).ascension;
+ const route=job?facts([['正在执行',job.name],['当前阶段',({prepare:'转生前准备',ascending:'进入天堂',buying:'购买天堂升级',restarting:'开始下一轮'})[job.phase]]]):
+  facts([['下一套目标',plan.name||'等待规划'],['状态',plan.reason],
+   ...(plan.cost!=null?[['整套成本',F(plan.cost,0)+' 筹码'],['本轮应增加',F(plan.target,0)+' 声望']]:[]),
+   ...(plan.deficit>0&&Number.isFinite(plan.seconds)?[['按无增益产量估算',T(plan.seconds)]]:[]),
+   ...(plan.rows?.length?[['采购顺序',plan.rows.map(({upgrade})=>upgrade.dname||upgrade.name).join('、')]]:[])]);
+ return block('自动转生路线',route+btn(mode==='cycle'?'管理自动转生':'设置自动转生','configure-ascension','','primary'))+
+ block('声望与天堂升级预算',`<div class="fields">
   ${field('ascendTarget','目标新增声望','number',{min:0})}
   ${select('heavenlyTarget','目标天堂升级',[['','不指定'],...upgrades.map(u=>[u.id,u.dname||u.name])])}
  </div>`+facts([
@@ -2532,7 +3060,7 @@ function releaseLease(){
  engine.lastPulse=0;
 }
 function wantsLease(){
- return !destroyed&&M.active(engine.g,engine.c)&&!C.gate(engine.g,engine.c,{paused:engine.paused,hidden:document.hidden});
+ return !destroyed&&engine.hasWork()&&!engine.leaseGate();
 }
 async function lease(){
  if(!wantsLease()){
@@ -2606,19 +3134,36 @@ function confirmManagement(id){
  const saveId=g.fullDate;
  engine.syncSharedSettings();
  const current=engine.c,catalog=managementModules[id],active=M.modes(g,current);
- const chosen=id==='common'?Object.fromEntries(Object.entries(defaultManagement).filter(([key])=>!active[key])):
+ const growth=id==='growth',bundle=growth||id==='common';
+ const bundleModes=growth?{...defaultManagement,season:'collection',research:'safe',ascension:'cycle'}:defaultManagement;
+ const chosen=bundle?Object.fromEntries(Object.entries(bundleModes).filter(([key])=>!active[key]||growth&&key==='ascension'&&active[key]!=='cycle')):
   {[id]:managementDraft.get(id)||active[id]||catalog.modes[0][0]};
- if(!Object.keys(chosen).length){toast('常用玩法已全部加入托管');return;}
+ const sugar=growth&&!C.managesLumps(g,current)&&!(current.lumpLevel&&current.lumpGoal?.saveId===saveId);
+ if(!Object.keys(chosen).length&&!sugar){toast('选定玩法已全部加入托管');return;}
  const next={...current,managed:{...current.managed,saveId,modes:{...active,...chosen}}};
  const mode=chosen[id];
- const title=id==='common'?'开启常用托管组合':'开启'+catalog.title+'托管';
- const rows=id==='common'?[
+ const automatic=growth||id==='ascension'&&mode==='cycle';
+ if(automatic&&!navigator.locks?.request)throw Error('浏览器未提供独占锁，无法开启自动转生');
+ const currentRun=M.execution(g,current),startup={};
+ if(automatic&&!currentRun.click)startup.events='idle';
+ if(automatic&&!currentRun.purchase)startup.purchase='efficient';
+ const title=growth?'开启全程挂机':bundle?'开启常用托管组合':'开启'+catalog.title+'托管';
+ const rows=bundle?[
   ['托管玩法',Object.keys(chosen).map(key=>managementModules[key].title).join('、')],
   ['饼干保留',reserveModes.find(([key])=>key===current.reserveMode)[1]],
   ['股市仓位上限',F(current.marketBudget,0)+'%'],
-  ['养龙范围','孵化，训练最多至 5 级']
- ]:[['托管目标',catalog.modes.find(([key])=>key===mode)[1]],['预计下一步',managementNext(g,next,id,mode)]];
- const message=id==='common'?'按存档选择亲本、阵容和交易机会。魔法书可用 Haggler’s Charm 推进序列，反噬时升级价格短期上涨 2%。':
+  ['养龙范围','孵化，训练最多至 5 级'],
+  ...(growth?[
+   ['跨轮经营','自动备份、转生、购买天堂升级、分配永久栏并重开'],
+   ['额外授权',[
+    '开启后台运行与刷新恢复',chosen.season?'按上限切换季节':'',chosen.research?'研究到冥界烤箱':'',
+    sugar?'使用糖块解锁四个小游戏':''
+   ].filter(Boolean).join('、')]
+  ]:[])
+ ]:[['托管目标',catalog.modes.find(([key])=>key===mode)[1]],['预计下一步',managementNext(g,next,id,mode)],
+  ...(automatic?[['同意持续运行','开启刷新自动恢复'+(Object.keys(startup).length?'，补上'+Object.keys(startup).map(key=>managementModules[key].title).join('、'):'')]]:[])];
+ const message=bundle?'魔法书会为预判到的点击狂热保留魔力。Haggler’s Charm 可推进序列，反噬时升级价格暂涨 2%。'+
+  (growth?'已有的玩法配置继续生效，提醒模式会切换为自动转生。':''):
   managedScope(id,mode,current);
  ask(title,{rows,message:message+(engine.paused?'\n点击「继续」后执行。':''),button:'确认托管'},()=>{
   if(!C.compatible(engine.g)||engine.g.fullDate!==saveId)throw Error('存档已变化，请重新确认');
@@ -2626,9 +3171,14 @@ function confirmManagement(id){
   const previous=engine.c.managed,valid=previous.saveId===saveId;
   const selections=valid?{...previous.modes}:{};
   for(const [key,value] of Object.entries(chosen)){
-   if(id!=='common'||!selections[key])selections[key]=value;
+   if(!bundle||!selections[key]||growth&&key==='ascension')selections[key]=value;
   }
-  engine.set({managed:{...previous,saveId,modes:selections,gods:valid?previous.gods:null}});
+  for(const [key,value] of Object.entries(startup))if(!selections[key])selections[key]=value;
+  const sugarStillFree=sugar&&!C.managesLumps(g,engine.c)&&!(engine.c.lumpLevel&&engine.c.lumpGoal?.saveId===saveId);
+  engine.set({...(automatic?{remember:true}:{}),
+   ...(growth?{background:true}:{}),
+   ...(sugarStillFree?{lumpManaged:true,lumpManagedSave:saveId,lumpManagedMode:'unlocks'}:{}),
+   managed:{...previous,saveId,modes:selections,gods:valid?previous.gods:null}});
   engine.log(title+' · '+Object.keys(chosen).map(key=>managementModules[key].title).join('、'));
   void lease();
  });
@@ -2840,7 +3390,14 @@ root.addEventListener('click',async event=>{
  }
  if(action==='start-management'){confirmManagement(arg);return;}
  if(action==='stop-management'){stopManagement(arg);return;}
+ if(action==='configure-ascension'){
+  managementTab='ascension';
+  managementDraft.set('ascension','cycle');
+  navigate('management');
+  return;
+ }
  if(action==='management-common'){confirmManagement('common');return;}
+ if(action==='management-growth'){confirmManagement('growth');return;}
  if(action==='rule-group'){
   groupId=arg;
   navigate('automation',actionSelector('rule-group',arg));
@@ -2954,7 +3511,16 @@ root.addEventListener('click',async event=>{
  if(action==='dragon-manual'){const step=g.dragonLevels[g.dragonLevel];ask('训练龙','本级成本：'+C.plain(step?.costStr?.()||'无法升级')+'。可能牺牲建筑。',()=>{engine.manualGate();if(!C.has(g,'A crumbly egg')||!step.cost?.())throw Error('尚未解锁或材料不足');engine.backup('手动龙升级前',true);g.UpgradeDragon();});}
  if(action==='wrinklers-manual'){ask('收取普通皱纹虫','将普通皱纹虫交由游戏结算，保留全部闪光个体。',()=>{engine.manualGate();engine.backup('皱纹虫收取前');for(const w of g.wrinklers)if(w.phase===2&&w.type!==1)w.hp=0;});}
  if(action==='ascend'){ask('准备转生','先创建重点快照，再打开游戏自己的转生确认窗口。',()=>{engine.manualGate();engine.backup('转生前',true);engine.setPaused(true);releaseLease();show(false);g.Ascend();});}
- if(action==='restore'){const e=engine.backups().find(x=>x.id===arg);if(!e)throw Error('快照已不在列表中');ask('恢复 '+e.label,'将回退游戏到 '+new Date(e.at).toLocaleString('zh-CN')+'。先保存当前进度，恢复后所有自动化保持暂停。',()=>{engine.manualGate();engine.backup('恢复前',true);engine.setPaused(true);releaseLease();if(!g.ImportSaveCode(e.save))throw Error('游戏拒绝此存档');engine.set(C.config(e.settings));engine.rebuy=[];toast('已恢复存档；自动化已暂停');});}
+ if(action==='restore'){const e=engine.backups().find(x=>x.id===arg);if(!e)throw Error('快照已不在列表中');ask('恢复 '+e.label,'将回退游戏到 '+new Date(e.at).toLocaleString('zh-CN')+'。先保存当前进度，恢复后所有自动化保持暂停。',()=>{
+  engine.manualGate();
+  engine.backup('恢复前',true);
+  engine.setPaused(true);
+  releaseLease();
+  if(!g.ImportSaveCode(e.save))throw Error('游戏拒绝此存档');
+  engine.clearPending(g);
+  engine.set(C.config(e.settings));
+  toast('已恢复存档；自动化已暂停');
+ });}
  if(['grant','grant-lump','refill-magic'].includes(action)){if(!lab)throw Error('请先启用本次会话实验室');ask('确认资源补给',action==='grant'?`增加 ${arg} 分钟无临时增益的饼干产量，改变累计产量。` :action==='grant-lump'?'增加 1 糖块，改变资源与累计糖块统计。':'将当前魔法书魔力直接补满。',()=>{engine.manualGate();if(!lab)throw Error('实验室已关闭');engine.backup('实验室操作前',true);if(action==='grant'){const n=C.num(g.unbuffedCps)*Number(arg)*60;if(![1,10,60].includes(Number(arg))||!Number.isFinite(n)||!Number.isFinite(g.cookies+n)||!Number.isFinite(g.cookiesEarned+n)||n<=0||g.cookies+n===g.cookies)throw Error('产量为零或超过数值范围');g.Earn(n);}if(action==='grant-lump'){if(!g.canLumps?.())throw Error('糖块尚未解锁');g.gainLumps(1);}if(action==='refill-magic'){const m=C.mini(g,'Wizard tower');if(!m)throw Error('魔法书未解锁');m.magic=m.magicM;}engine.log('实验室：'+action);toast('操作完成，重点快照已保存');});}
  }catch(e){toast('未执行：'+e.message);}
 });

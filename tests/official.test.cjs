@@ -6,6 +6,50 @@ const section=(s,a,b)=>{const start=s.indexOf(a),end=s.indexOf(b,start);assert(s
 const memory=()=>{const map=new Map();return{getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v)};};
 function context(g,m){const node={style:{},setAttribute(){},classList:{add(){},remove(){}},getBounds:()=>({left:0,right:10,top:0,bottom:10})};const ctx=vm.createContext({Game:g,M:m,EN:true,loc:s=>s,Beautify:String,LBeautify:String,l:()=>node,PlaySound(){},triggerAnim(){},console,document:{},Date});vm.runInContext('function choose(a){return a[Math.floor(Math.random()*a.length)]}',ctx);return ctx;}
 const rngSource=section(main,'(function(a,b,c,d,e,f){','\n\nfunction bind');
+test('automatic first ascension uses the official prices, prestige arithmetic, purchase API and slot dialog',()=>{
+ const g=make('ascension'),ctx=context(g,null),data=new Map();
+ const storage={getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value),removeItem:key=>data.delete(key)};
+ g.Has=name=>!!g.Upgrades[name]?.bought||g.owned.has(name);
+ g.Upgrade=function(){};
+ vm.runInContext(section(main,'Game.HCfactor=3;','Game.GetHeavenlyMultiplier=function'),ctx);
+ vm.runInContext(section(main,'Game.Upgrade.prototype.buy=function','Game.Upgrade.prototype.earn=function'),ctx);
+ const originalAscend=g.Ascend;
+ g.Ascend=confirm=>{
+  if(!confirm)return originalAscend(confirm);
+  g.EarnHeavenlyChips(g.cookiesEarned,true);
+  g.OnAscend=1;
+  g.BuildAscendTree();
+ };
+ const records=[];
+ g.heavenlyChipsSpent=0;
+ const originalBuild=g.BuildAscendTree;
+ g.BuildAscendTree=purchased=>{if(purchased)records.push(purchased.name);originalBuild();};
+ const engine=new Engine(()=>g,storage);
+ engine.locked=true;
+ engine.set({remember:true,managed:{saveId:g.fullDate,modes:{ascension:'cycle'}}});
+ for(const item of M.ascensionPlan(g,engine.c).rows){
+  const line=main.split('\n').find(line=>line.includes("new Game.Upgrade('"+item.name+"',"));
+  const officialPrice=Number(/,\s*(\d+)\s*,\s*\[\d+,\d+\]/.exec(line||'')?.[1]);
+  assert.equal(officialPrice,item.price,item.name);
+  item.upgrade.buy=g.Upgrade.prototype.buy;
+ }
+ const slot=g.Upgrades['Permanent upgrade slot I'];
+ assert(main.includes("Game.last.activateFunction=function(){Game.AssignPermanentSlot(0);};"));
+ let prompted=0;
+ slot.activateFunction=()=>{
+  g.promptOn=1;
+  g.promptL={querySelector:selector=>selector==='#promptContentPickPermaUpgrade'};
+  prompted++;
+ };
+ g.ClosePrompt=()=>{g.promptOn=0;};
+ for(let i=0,now=Date.now();i<18;i++)engine.pulse(now+i*1100);
+ assert.equal(prompted,1);
+ assert.equal(g.resets,1);
+ assert.equal(g.heavenlyChipsSpent,390);
+ assert.equal(g.heavenlyChips,351);
+ assert.equal(g.permanentUpgrades[0],g.Upgrades['Kitten helpers'].id);
+ assert.equal(records.length,10);
+});
 test('independent RNG matches the actual game string-seed stream for 10000 outputs',()=>{const ctx=vm.createContext({});vm.runInContext(rngSource,ctx);for(let seed=0;seed<100;seed++){const str='Pilot测试/'+seed;ctx.seed=str;vm.runInContext('Math.seedrandom(seed)',ctx);const random=C.rng(str);for(let i=0;i<100;i++)assert.equal(random(),vm.runInContext('Math.random()',ctx));}});
 test('forecast agrees with actual 2.058 spell and shimmer initialization in 1200 cases',()=>{const g=make(),m=g.Objects['Wizard tower'].minigame;g.shimmerTypes.golden.n=0;g.elderWrath=0;g.chimeType=0;g.ascensionMode=0;g.bounds={left:0,right:1400,top:0,bottom:900};g.hasGod=()=>false;g.playGoldenCookieChime=()=>{};g.Has=()=>false;const ctx=context(g,m);vm.runInContext(rngSource,ctx);vm.runInContext(section(grimoire,'M.spells={','M.spellsById=[]'),ctx);
 const init=section(main,'initFunc:function(me)','\n\t\t\t\tupdateFunc:function(me)').replace(/^initFunc:/,'').replace(/,\s*$/,'');ctx.init=vm.runInContext('('+init+')',ctx);g.shimmer=function(type,obj){this.type=type;this.forceObj=obj;this.force='';this.l={style:{},setAttribute(){}};g.shimmerTypes.golden.n++;ctx.init(this);ctx.spawned=this;};

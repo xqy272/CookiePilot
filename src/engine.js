@@ -6,7 +6,10 @@
 })(globalThis,function(C,M){
 'use strict';
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
-const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode','managed'];
+const ASCENT='cookie-pilot:ascent:v3',REBUY='cookie-pilot:rebuy:v3',DIAGNOSTICS='cookie-pilot:activity:v3';
+const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode',
+ 'managed','ascendTarget','comboWait','challenge','protectShiny','background','remember'];
+const roundKey=g=>g?.fullDate&&g?.startDate?[g.fullDate,g.startDate,g.seed].join(':'):'';
 function withSpecialMenu(g,tab,fn){
  if(g.specialTab||!g.ToggleSpecialMenu)return fn();
  g.specialTab=tab;
@@ -25,6 +28,13 @@ class Engine{
   this.clickSample={at:Date.now(),total:0,rate:0};
   this.bridgedTarget='';
   this.startupHold=false;
+  this.magicHold=null;
+  this.rebuyRound='';
+  this.rebuyMarker='';
+  this.rebuyTargets=[];
+  this.lastActivity=null;
+  this.lastFailure=null;
+  this.lastDiagnosticWrite=0;
   let saved;try{saved=JSON.parse(storage.getItem(SETTINGS)||'null');if(saved?.schema>2)throw Error('设置来自更新版本');this.c=saved?C.config(saved):C.migrate(JSON.parse(storage.getItem('cookie-pilot:settings:v1')||'{}'));const h=JSON.parse(storage.getItem(HISTORY)||'{}');if(h&&typeof h==='object'){this.hist=h.hist||{};this.ledger=h.ledger||{};this.historyContext=h.context;}
    this.paused=storage.getItem(PAUSE)==='true';
    this.startupHold=!this.paused&&!this.c.remember&&M.pending(this.c);
@@ -34,7 +44,13 @@ class Engine{
   this.savedVersion=saved?.version||'1';
  }
  get g(){return this.getGame();}
- env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:!this.locked&&M.active(this.g,this.c)};}
+ env(){return{paused:this.paused,hidden:this.hooks.hidden?.()||false,follower:!this.locked&&this.hasWork()};}
+ hasWork(g=this.g){return M.active(g,this.c)||this.rebuyTargets.length>0;}
+ leaseGate(){
+  const g=this.g;
+  const throughAscension=M.modes(g,this.c).ascension==='cycle'&&!!this.ascentJob(g);
+  return C.gate(g,this.c,{paused:this.paused,hidden:this.hooks.hidden?.(),throughAscension});
+ }
  set(update){this.c=C.config({...this.c,...update});this.persist(update);this.hooks.change?.();}
  setPaused(value){
   this.paused=value;
@@ -67,7 +83,38 @@ class Engine{
    this.storage.setItem(SETTINGS,JSON.stringify({...this.c,version:C.VERSION}));
   }catch(e){this.paused=true;this.log('设置保存失败，自动化已暂停：'+e.message);}
  }
- log(text,actions=0){this.actions+=actions;this.logs.unshift({at:Date.now(),text});this.logs.length=Math.min(this.logs.length,120);this.hooks.log?.(text);}
+ log(text,actions=0){
+  const at=Date.now();
+  this.actions+=actions;
+  this.logs.unshift({at,text});
+  this.logs.length=Math.min(this.logs.length,120);
+  if(actions>0&&this.g?.fullDate)this.lastActivity={at,text,saveId:this.g.fullDate};
+  this.hooks.log?.(text);
+ }
+ diagnostics(){
+  const saveId=this.g?.fullDate;
+  const current=item=>item&&item.saveId===saveId?item:null;
+  const persisted=this.readRecord(DIAGNOSTICS)||{};
+  return{activity:current(this.lastActivity)||current(persisted.activity),failure:current(this.lastFailure)||current(persisted.failure)};
+ }
+ checkpointDiagnostics(now=Date.now(),force=false){
+  if(!force&&(!this.locked||now-this.lastDiagnosticWrite<15000))return;
+  const {activity,failure}=this.diagnostics();
+  if(!activity&&!failure)return;
+  try{
+   this.storage.setItem(DIAGNOSTICS,JSON.stringify({activity,failure}));
+   this.lastDiagnosticWrite=now;
+  }catch{}
+ }
+ writeFailure(text){
+  this.lastFailure={at:Date.now(),text,saveId:this.g?.fullDate};
+  this.log(text);
+  this.checkpointDiagnostics(Date.now(),true);
+ }
+ readRecord(key){
+  try{return JSON.parse(this.storage.getItem(key)||'null');}
+  catch{return null;}
+ }
  state(k,text){this.states[k]=text;return false;}
  backups(){try{const rows=JSON.parse(this.storage.getItem(BACKUPS)||'[]');return Array.isArray(rows)?rows.filter(x=>x&&typeof x.save==='string'&&Number.isFinite(x.at)).slice(0,15):[];}catch{return[];}}
  backup(label='手动备份',pin=false){const g=this.g;if(!C.ready(g)||g.OnAscend||g.AscendTimer>0)throw Error('游戏未就绪或正在转生');const save=g.WriteSave(1);if(typeof save!=='string'||!save.length||save.length>2000000)throw Error('未取得有效存档');this.backupSerial=(this.backupSerial||0)+1;const entry={id:Date.now()+'-'+this.backupSerial,at:Date.now(),label,save,settings:structuredClone(this.c),pin,version:String(g.version)};const old=this.backups();const pinned=old.filter(x=>x.pin).slice(0,pin?4:5),normal=old.filter(x=>!x.pin).slice(0,9);this.storage.setItem(BACKUPS,JSON.stringify([entry,...pinned,...normal]));this.lastBackup=Date.now();return entry;}
@@ -93,7 +140,7 @@ class Engine{
    }
    this.state(k,'发生错误，已关闭');
    const name=({lumpLevel:'糖块升级',lumpManaged:'糖块托管',lump:'糖块收取',pantheon:'神灵调换'})[k]||k;
-   this.log(name+' 已停止：'+error.message);
+    this.writeFailure(name+' 已停止：'+error.message);
    return false;
   }
  }
@@ -120,8 +167,14 @@ class Engine{
  pulse(now=Date.now()){
   if(this.disposed)return;
   if(C.ready(this.g)&&this.savedVersion!==C.VERSION&&!this.g.OnAscend&&!this.g.AscendTimer){try{this.backup('升级前设置与存档',true);this.savedVersion=C.VERSION;this.persist();this.log('已迁移至 '+C.VERSION);}catch(e){this.paused=true;this.state('system','迁移备份失败');}}
-  this.sampleMarket();
-  const active=M.active(this.g,this.c)&&!C.gate(this.g,this.c,this.env());
+   if(now>=(this.next.recovery||0)){
+    this.next.recovery=now+1000;
+    this.loadRebuy();
+    if(this.advancePending(now))return;
+   }
+   if(this.rebuyTargets.length||this.g?.OnAscend&&this.ascentJob(this.g))return;
+   this.sampleMarket();
+   const active=this.hasWork()&&!C.gate(this.g,this.c,this.env());
   const elapsed=now-this.lastPulse;
   if(active&&this.lastPulse&&elapsed>0){
    if(elapsed>1500){
@@ -168,12 +221,16 @@ class Engine{
    if(M.configured(this.c))this.syncSharedSettings();
    const g=this.g;
    this.checkMilestones(g);
-   for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
+    if(this.considerAscension(g))return;
+    for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
     if(k==='lump'&&C.managesLumps(g,this.c))continue;
     if(k==='harvest'&&M.modes(g,this.c).garden)continue;
     const run=M.execution(g,this.c);
-    this.attempt(k,()=>fn.call(this,run),run);
+     const config=k==='research'?{...run,research:!!M.modes(g,this.c).research}:run;
+     this.attempt(k,()=>fn.call(this,run),config);
+     if(this.rebuyTargets.length)break;
    }
+    this.checkpointDiagnostics(now);
   }
   if(C.ready(this.g)&&!this.g.OnAscend&&!this.g.AscendTimer&&!this.g.promptOn&&now-this.lastBackup>=this.c.backupMinutes*60000){try{this.backup('自动快照');}catch(e){this.lastBackup=now;this.log('自动备份失败：'+e.message);}}
  }
@@ -184,7 +241,7 @@ class Engine{
    const gods=M.pantheonLineup(g,M.execution(g,this.c));
    if(gods)this.set({managed:{...this.c.managed,gods}});
   }
-  const reached=modes.ascension&&this.c.ascendTarget>0&&C.prestige(g)>=this.c.ascendTarget;
+  const reached=modes.ascension==='notice'&&this.c.ascendTarget>0&&C.prestige(g)>=this.c.ascendTarget;
   const milestone=[g.startDate,this.c.ascendTarget].join(':');
   if(reached&&milestone!==this.ascendNotice){
    this.ascendNotice=milestone;
@@ -192,6 +249,154 @@ class Engine{
    this.log(message);
    this.hooks.notice?.(message);
   }
+ }
+ ascentJob(g=this.g){
+  if(!g?.fullDate)return null;
+  const job=this.readRecord(ASCENT+':'+g.fullDate);
+  return job?.saveId===g.fullDate&&typeof job.round==='string'&&Array.isArray(job.names)&&
+   Array.isArray(job.prep)&&['prepare','ascending','buying','restarting'].includes(job.phase)?job:null;
+ }
+ saveAscent(g,job){
+  const key=ASCENT+':'+g.fullDate;
+  if(job)this.storage.setItem(key,JSON.stringify(job));
+  else this.storage.removeItem(key);
+ }
+ clearPending(g=this.g){
+  if(g?.fullDate)this.saveAscent(g,null);
+  if(roundKey(g))this.saveRebuy(g,[],'');
+  this.rebuy=[];
+  this.rebuyTargets=[];
+  this.rebuyRound='';
+ }
+ considerAscension(g){
+  if(M.modes(g,this.c).ascension!=='cycle'||this.ascentJob(g)||C.gate(g,this.c,this.env())||this.readRecord(PAUSE)===true)return false;
+  if(this.c.challenge!=='none')return this.state('ascension','挑战保护：暂停自动转生');
+  if(this.hooks.exclusive?.()===false)return this.state('ascension','自动转生需要浏览器独占锁');
+  const plan=M.ascensionPlan(g,this.c);
+  if(!plan.ready)return this.state('ascension',plan.reason);
+  try{
+   const run=M.execution(g,this.c);
+   const prep=g.buyMode===-1?[]:M.ascensionPrep(g,run).map(row=>({id:row.object.id,goal:row.goal}));
+   this.backup('自动转生前 · '+plan.name,true);
+   const job={saveId:g.fullDate,round:roundKey(g),resets:C.num(g.resets),names:plan.names,
+    name:plan.name,target:plan.target,prep,phase:'prepare'};
+   this.saveAscent(g,job);
+   return this.advanceAscent(g,job);
+  }catch(error){return this.stopForRecovery('自动转生未继续：'+error.message);}
+ }
+ advancePending(){
+  const g=this.g;
+  if(this.readRecord(PAUSE)===true)return this.rebuyTargets.length>0||!!g?.OnAscend;
+  if(this.rebuyTargets.length){
+   if(!C.gate(g,this.c,this.env())){
+    try{this.restoreBuildings();}
+    catch(error){return this.stopForRecovery('建筑回购未继续：'+error.message);}
+   }
+   return true;
+  }
+  const job=this.ascentJob(g);
+  if(!job||!this.syncSharedSettings()||M.modes(g,this.c).ascension!=='cycle')return false;
+  if(C.gate(g,this.c,{...this.env(),throughAscension:true}))return !!(g.OnAscend||g.AscendTimer||g.ReincarnateTimer);
+  if(this.hooks.exclusive?.()===false)return this.state('ascension','自动转生需要浏览器独占锁');
+  try{return this.advanceAscent(g,job);}
+  catch(error){return this.stopForRecovery('自动转生未继续：'+error.message);}
+ }
+ stopForRecovery(message){
+  this.setPaused(true);
+  this.state('system',message);
+  this.writeFailure(message);
+  return true;
+ }
+ advanceAscent(g,job){
+  if(g.AscendTimer>0||g.ReincarnateTimer>0)return true;
+  if(job.round!==roundKey(g)){
+   if(job.phase==='restarting'&&C.num(g.resets)>job.resets){
+    g.WriteSave();
+    this.log('自动转生完成 · '+job.name+' · 已开始下一轮',1);
+    this.state('ascension','已开始下一轮');
+    if(this.states.system?.startsWith('自动转生未继续'))delete this.states.system;
+    this.checkpointDiagnostics(Date.now(),true);
+   }
+   this.saveAscent(g,null);
+   return false;
+  }
+  if(g.OnAscend)return this.finishAscension(g,job);
+  if(g.ascensionMode===1||this.c.challenge!=='none')return this.state('ascension','挑战保护：暂停自动转生');
+  if(C.clickBuff(g))return this.state('ascension','等待本次点击爆发结束');
+  if(this.c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return this.state('ascension','检测到闪光皱纹虫，等待玩家处理');
+  const budget=M.heavenlyBudget(g,job.names);
+  if(budget.error)throw Error(budget.error);
+  const gained=C.prestige(g);
+  if(gained<Math.max(job.target,this.c.ascendTarget)||gained+C.num(g.heavenlyChips)<budget.cost){
+   return this.state('ascension','等待当前存档恢复转生预算');
+  }
+  if(job.prep.length){
+   const [item,...rest]=job.prep;
+   const object=g.ObjectsById?.[item.id],quantity=item.goal-object?.amount;
+   const cost=quantity>0&&object?.getSumPrice?.(quantity);
+   const keep=C.reserve(g,this.c);
+   if(g.buyMode!==-1&&object&&!object.locked&&!this.c.blocked.includes('b:'+object.id)&&
+      item.goal<=this.c.maxBuilding&&quantity>0&&quantity<=25&&Number.isFinite(cost)&&cost>=0&&cost<=(g.cookies-keep)*.01){
+    const previous=object.amount;
+    object.buy(quantity);
+    if(object.amount>previous){
+     g.WriteSave();
+     this.log('转生前补齐 '+(object.dname||object.name)+' ×'+(object.amount-previous),1);
+    }
+   }
+   this.saveAscent(g,{...job,prep:rest});
+   return true;
+  }
+  if(!job.collected){
+   const worms=(g.wrinklers||[]).filter(w=>w.type!==1&&w.phase===2&&w.sucked>0&&w.hp>0);
+   if(worms.length){
+    this.saveAscent(g,{...job,collected:true});
+    for(const worm of worms)worm.hp=0;
+    this.log('转生前结算普通皱纹虫 ×'+worms.length,1);
+    return true;
+   }
+  }
+  if(typeof g.Ascend!=='function'||typeof g.Reincarnate!=='function')throw Error('缺少原版转生入口');
+  g.WriteSave();
+  if(this.rebuyMarker)this.saveRebuy(g,[],'');
+  this.saveAscent(g,{...job,collected:true,phase:'ascending'});
+  g.Ascend(1);
+  if(!g.OnAscend&&!g.AscendTimer)throw Error('游戏未确认进入转生');
+  this.log('自动转生 · '+job.name+' · 新增声望 '+C.fmt(gained,0),1);
+  this.state('ascension','正在进入天堂');
+  return true;
+ }
+ finishAscension(g,job){
+  if(job.phase==='prepare')throw Error('处于手动转生界面，请核对当前任务');
+  if(g.nextAscensionMode||this.c.challenge!=='none')throw Error('当前已选择挑战模式');
+  const {rows,cost,error}=M.heavenlyBudget(g,job.names);
+  if(error||cost>C.num(g.heavenlyChips))throw Error(error||'实际天堂筹码低于已计划预算');
+  if(rows.length){
+   const {upgrade,price}=rows[0];
+   if(!upgrade.canBePurchased||typeof upgrade.buy!=='function')throw Error('暂不能购买 '+(upgrade.dname||upgrade.name));
+   this.saveAscent(g,{...job,phase:'buying'});
+   const before=g.heavenlyChips;
+   upgrade.buy();
+   if(!upgrade.bought||g.heavenlyChips!==before-price)throw Error('天堂升级成交结果与计划不一致');
+   // The original purchase opens the slot picker before the rest of the tree is bought.
+   if(upgrade.name.startsWith('Permanent upgrade slot ')&&g.promptOn&&
+      g.promptL?.querySelector('#promptContentPickPermaUpgrade'))g.ClosePrompt();
+   this.log('天堂升级 · '+(upgrade.dname||upgrade.name)+' · 花费 '+C.fmt(price,0)+' 筹码',1);
+   this.state('ascension','天堂升级还剩 '+(rows.length-1)+' 项');
+   return true;
+  }
+  const choice=M.permanentSlots(g);
+  if(choice){
+   g.permanentUpgrades[choice.slot]=choice.upgrade.id;
+   g.BuildAscendTree?.();
+   this.log('永久栏位 '+(choice.slot+1)+' · '+(choice.upgrade.dname||choice.upgrade.name),1);
+   return true;
+  }
+  this.saveAscent(g,{...job,phase:'restarting'});
+  this.state('ascension','正在开始下一轮');
+  g.Reincarnate(1);
+  if(g.OnAscend)throw Error('游戏未确认开始新一轮');
+  return true;
  }
  purchase(c=this.c){
   const g=this.g;
@@ -202,7 +407,9 @@ class Engine{
    this.set({purchaseMode:'efficient',target:''});
    return this.state('purchase','规划升级已完成，等待下一笔采购');
   }
-  const plan=M.purchasePlan(g,c,{bridgedTarget:this.bridgedTarget});
+  const observed=this.clickSample.rate;
+  const run=observed>0?{...c,effectiveRate:observed}:c;
+  const plan=M.purchasePlan(g,run,{bridgedTarget:this.bridgedTarget});
   const item=plan.next;
   if(!item)return this.state('purchase',plan.reason);
   const building=item.id.startsWith('b:');
@@ -298,14 +505,22 @@ class Engine{
   }
   return this.state('trade',reason||'等待游戏确认交易');
  }
+ spellPlan(g,c,now=Date.now(),track=false){
+  const book=C.mini(g,'Wizard tower');
+  const key=[roundKey(g),book?.spellsCastTotal,c.managed.modes.magic].join('/');
+  const since=this.magicHold?.key===key?this.magicHold.at:now;
+  const plan=M.spellPlan(g,c,this.lastCast,now,since);
+  if(track&&plan.holding&&this.magicHold?.key!==key)this.magicHold={key,at:now};
+  return plan;
+ }
  cast(c=this.c){
   const g=this.g,managed=M.modes(g,c).magic;
-  const {m,spell,seconds,reason,key,detail}=managed?M.spellPlan(g,c,this.lastCast):C.castPlan(g,c,this.lastCast);
+  const {m,spell,seconds,reason,key,detail}=managed?this.spellPlan(g,c,Date.now(),true):C.castPlan(g,c,this.lastCast);
   if(reason)return this.state('cast',reason+(Number.isFinite(seconds)?' · 约 '+C.time(seconds):''));
   this.backup('施法前');
   if(managed){
    if(!this.managedExecution('magic',g))return this.state('cast','魔法书托管已暂停');
-   const fresh=M.spellPlan(g,M.execution(g,this.c),this.lastCast);
+   const fresh=this.spellPlan(g,M.execution(g,this.c));
    if(fresh.reason||fresh.key!==key||fresh.m!==m)return this.state('cast',fresh.reason||'施法条件已变化');
   }
   const before=key==='hand of fate'?new Set(g.shimmers):null;
@@ -326,6 +541,21 @@ class Engine{
  }
  managedExecution(id,g){
   return this.syncSharedSettings()&&!!M.modes(g,this.c)[id]&&!this.spendingGate(g);
+ }
+ research(c=this.c){
+  const g=this.g,plan=M.researchPlan(g,c);
+  if(!plan.upgrade)return this.state('research',plan.reason);
+  this.backup('研究采购前');
+  if(!this.managedExecution('research',g))return this.state('research','研究托管已暂停');
+  const fresh=M.researchPlan(g,M.execution(g,this.c));
+  if(fresh.upgrade!==plan.upgrade)return this.state('research',fresh.reason);
+  const upgrade=fresh.upgrade,pledges=C.num(g.pledges);
+  if(upgrade.name==='One mind')upgrade.buy(1);
+  else upgrade.buy();
+  const applied=upgrade.name==='Elder Pledge'?C.num(g.pledges)>pledges:!!upgrade.bought;
+  if(!applied)return this.state('research','游戏暂未确认 '+(upgrade.dname||upgrade.name));
+  this.log(fresh.reason+' · 花费 '+C.fmt(fresh.cost),1);
+  return this.state('research',fresh.reason);
  }
  lump(managed=false){
   const g=this.g,window=C.lumpWindow(g);
@@ -514,8 +744,75 @@ class Engine{
   this.log('季节托管 · '+plan.reason+' · 花费 '+C.fmt(fresh.cost),1);
   return this.state('season',plan.reason);
  }
- godzamok(c=this.c){const g=this.g;if(this.rebuy.length)return this.restoreBuildings();const active=Object.values(g.buffs||{}).find(b=>num(b.multClick,1)>1);if(!active){this.godzamokBuff=null;return this.state('godzamok','等待点击爆发');}if(this.godzamokBuff===active)return this.state('godzamok','本次增益已执行');if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');const list=c.godzamokBuildings.map(id=>g.ObjectsById[Number(id)]).filter(Boolean).map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(x=>x.n>0);if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');const buyback=list.reduce((s,{o,n})=>s+o.getSumPrice(n),0);if(g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');this.backup('Godzamok 出售前',true);this.godzamokBuff=active;this.rebuy=list.map(({o})=>({id:o.id,target:o.amount}));for(const {o,n}of list)o.sell(n,1);this.log('Godzamok 出售已执行，开始回购');this.restoreBuildings();}
- restoreBuildings(){const g=this.g;if(g.buyMode===-1)return this.state('godzamok','等待退出出售模式后回购');const next=this.rebuy[0];if(!next)return;const o=g.ObjectsById[next.id],n=Math.max(0,next.target-o.amount);if(!n){this.rebuy.shift();return;}const cost=o.getSumPrice(n);if(g.cookies-cost<C.reserve(g,this.c))return this.state('godzamok','回购预算不足，采购等待');o.buy(n);if(o.amount>=next.target)this.rebuy.shift();this.state('godzamok',this.rebuy.length?'继续回购':'回购完成');}
+ loadRebuy(g=this.g){
+  const round=roundKey(g);
+  const stored=round?this.readRecord(REBUY+':'+round):null;
+  this.rebuyRound=round;
+  this.rebuyMarker=typeof stored?.buff==='string'?stored.buff:'';
+  this.rebuyTargets=Array.isArray(stored?.items)?stored.items.filter(item=>Number.isSafeInteger(item?.id)&&item.id>=0&&
+   Number.isSafeInteger(item.target)&&item.target>=0&&g.ObjectsById?.[item.id]):[];
+  this.rebuy=this.rebuyTargets.filter(item=>g.ObjectsById[item.id].amount<item.target);
+ }
+ saveRebuy(g,items,buff=this.rebuyMarker){
+  const round=roundKey(g);
+  if(!round)throw Error('无法确认回购所属存档');
+  const key=REBUY+':'+round;
+  if(items.length||buff)this.storage.setItem(key,JSON.stringify({items,buff}));
+  else this.storage.removeItem(key);
+  this.rebuyRound=round;
+  this.rebuyTargets=items;
+  this.rebuy=items;
+  this.rebuyMarker=buff;
+ }
+ godzamok(c=this.c){
+  const g=this.g;
+  if(this.readRecord(PAUSE)===true)return this.state('godzamok','全部自动化已暂停');
+  this.loadRebuy(g);
+  if(this.rebuyTargets.length)return this.restoreBuildings();
+  const [key,active]=Object.entries(g.buffs||{}).find(([,buff])=>num(buff.multClick,1)>1)||[];
+  if(!active){
+   this.godzamokBuff=null;
+   if(this.rebuyMarker)this.saveRebuy(g,[],'');
+   return this.state('godzamok','等待点击爆发');
+  }
+  if(this.godzamokBuff===active||this.rebuyMarker===key)return this.state('godzamok','本次增益已执行');
+  if(!g.hasGod?.('ruin'))return this.state('godzamok','Godzamok 尚未入槽');
+  if(g.buyMode===-1)return this.state('godzamok','出售模式下暂停组合执行');
+  const buildings=[...new Set(c.godzamokBuildings.map(Number))].map(id=>g.ObjectsById[id]).filter(Boolean);
+  const list=buildings.map(o=>({o,n:Math.min(c.godzamokSell,Math.max(0,o.amount-c.godzamokKeep))})).filter(item=>item.n>0);
+  if(!list.length)return this.state('godzamok','请选择可出售建筑及数量');
+  const buyback=list.reduce((sum,{o,n})=>sum+o.getSumPrice(n),0);
+  if(!Number.isFinite(buyback)||g.cookies-buyback<C.reserve(g,c))return this.state('godzamok','等待足额回购预算');
+  this.backup('Godzamok 出售前',true);
+  this.saveRebuy(g,list.map(({o})=>({id:o.id,target:o.amount})),key);
+  this.godzamokBuff=active;
+  for(const {o,n} of list)o.sell(n,1);
+  this.log('Godzamok 出售已执行，开始回购',1);
+  return this.restoreBuildings();
+ }
+ restoreBuildings(){
+  const g=this.g;
+  if(g.buyMode===-1)return this.state('godzamok','等待退出出售模式后回购');
+  if(!this.rebuyTargets.length||this.rebuyRound!==roundKey(g))return false;
+  const next=this.rebuyTargets.find(item=>g.ObjectsById[item.id].amount<item.target);
+  if(next){
+   const object=g.ObjectsById[next.id],quantity=next.target-object.amount;
+   const name=object.dname||object.name,cost=object.getSumPrice(quantity);
+   if(!Number.isFinite(cost)||g.cookies-cost<C.reserve(g,this.c)){
+    return this.state('godzamok','回购还差 '+quantity+' 个'+name+'，等待预算');
+   }
+   const before=object.amount;
+   object.buy(quantity);
+   if(object.amount<next.target)return this.state('godzamok','回购还差 '+(next.target-object.amount)+' 个'+name);
+   this.log('回购 '+name+' ×'+(object.amount-before),1);
+  }
+  this.rebuy=this.rebuyTargets.filter(item=>g.ObjectsById[item.id].amount<item.target);
+  if(this.rebuy.length)return this.state('godzamok','仍有 '+this.rebuy.length+' 项待回购');
+  g.WriteSave();
+  this.saveRebuy(g,[]);
+  if(this.states.system?.startsWith('建筑回购未继续'))delete this.states.system;
+  return this.state('godzamok','回购完成');
+ }
  dispose(){this.disposed=true;}
 }
 const num=C.num;
