@@ -8,7 +8,7 @@
 const SETTINGS='cookie-pilot:settings:v2',BACKUPS='cookie-pilot:backups:v2',HISTORY='cookie-pilot:market:v2',PAUSE='cookie-pilot:paused';
 const ASCENT='cookie-pilot:ascent:v3',REBUY='cookie-pilot:rebuy:v3',DIAGNOSTICS='cookie-pilot:activity:v3';
 const sharedKeys=['lump','lumpGoal','lumpReserveMode','lumpReserve','lumpLevel','lumpManaged','lumpManagedSave','lumpManagedMode',
- 'managed','ascendTarget','comboWait','challenge','protectShiny','background','remember'];
+ 'managed','ascendTarget','ascendCombo','comboWait','challenge','protectShiny','background','remember'];
 const roundKey=g=>g?.fullDate&&g?.startDate?[g.fullDate,g.startDate,g.seed].join(':'):'';
 function withSpecialMenu(g,tab,fn){
  if(g.specialTab||!g.ToggleSpecialMenu)return fn();
@@ -221,13 +221,13 @@ class Engine{
    if(M.configured(this.c))this.syncSharedSettings();
    const g=this.g;
    this.checkMilestones(g);
-    if(this.considerAscension(g))return;
+   if(this.considerAscension(g,now))return;
     for(const[k,fn]of [['godzamok',this.godzamok],['cast',this.cast],['research',this.research],['purchase',this.purchase],['harvest',this.harvest],['plant',this.plant],['trade',this.trade],['lump',this.lump],['lumpManaged',this.lumpManaged],['lumpLevel',this.lumpLevel],['wrinkler',this.wrinkler],['pet',this.pet],['dragon',this.dragon],['pantheon',this.pantheon],['aura',this.aura],['season',this.season]]){
     if(k==='lump'&&C.managesLumps(g,this.c))continue;
     if(k==='harvest'&&M.modes(g,this.c).garden)continue;
     const run=M.execution(g,this.c);
      const config=k==='research'?{...run,research:!!M.modes(g,this.c).research}:run;
-     this.attempt(k,()=>fn.call(this,run),config);
+     this.attempt(k,()=>fn.call(this,run,now),config);
      if(this.rebuyTargets.length)break;
    }
     this.checkpointDiagnostics(now);
@@ -268,7 +268,7 @@ class Engine{
   this.rebuyTargets=[];
   this.rebuyRound='';
  }
- considerAscension(g){
+ considerAscension(g,now=Date.now()){
   if(M.modes(g,this.c).ascension!=='cycle'||this.ascentJob(g)||C.gate(g,this.c,this.env())||this.readRecord(PAUSE)===true)return false;
   if(this.c.challenge!=='none')return this.state('ascension','挑战保护：暂停自动转生');
   if(this.hooks.exclusive?.()===false)return this.state('ascension','自动转生需要浏览器独占锁');
@@ -276,15 +276,19 @@ class Engine{
   if(!plan.ready)return this.state('ascension',plan.reason);
   try{
    const run=M.execution(g,this.c);
-   const prep=g.buyMode===-1?[]:M.ascensionPrep(g,run).map(row=>({id:row.object.id,goal:row.goal}));
+   const prep=g.buyMode===-1?[]:M.ascensionPrep(g,run).rows.map(row=>({
+    id:row.object.id,goal:row.goal,maxCost:row.cost,achievement:row.achievement.dname||row.achievement.name
+   }));
+   const combo=M.ascensionCombo(g,run,this.lastCast,now);
    this.backup('自动转生前 · '+plan.name,true);
    const job={saveId:g.fullDate,round:roundKey(g),resets:C.num(g.resets),names:plan.names,
     name:plan.name,target:plan.target,prep,phase:'prepare'};
+   if(combo&&combo.seconds<=run.comboWait)job.combo={index:combo.index,until:now+run.comboWait*1000};
    this.saveAscent(g,job);
-   return this.advanceAscent(g,job);
+   return this.advanceAscent(g,job,now);
   }catch(error){return this.stopForRecovery('自动转生未继续：'+error.message);}
  }
- advancePending(){
+ advancePending(now=Date.now()){
   const g=this.g;
   if(this.readRecord(PAUSE)===true)return this.rebuyTargets.length>0||!!g?.OnAscend;
   if(this.rebuyTargets.length){
@@ -298,7 +302,7 @@ class Engine{
   if(!job||!this.syncSharedSettings()||M.modes(g,this.c).ascension!=='cycle')return false;
   if(C.gate(g,this.c,{...this.env(),throughAscension:true}))return !!(g.OnAscend||g.AscendTimer||g.ReincarnateTimer);
   if(this.hooks.exclusive?.()===false)return this.state('ascension','自动转生需要浏览器独占锁');
-  try{return this.advanceAscent(g,job);}
+  try{return this.advanceAscent(g,job,now);}
   catch(error){return this.stopForRecovery('自动转生未继续：'+error.message);}
  }
  stopForRecovery(message){
@@ -307,7 +311,7 @@ class Engine{
   this.writeFailure(message);
   return true;
  }
- advanceAscent(g,job){
+ advanceAscent(g,job,now=Date.now()){
   if(g.AscendTimer>0||g.ReincarnateTimer>0)return true;
   if(job.round!==roundKey(g)){
    if(job.phase==='restarting'&&C.num(g.resets)>job.resets){
@@ -330,18 +334,33 @@ class Engine{
   if(gained<Math.max(job.target,this.c.ascendTarget)||gained+C.num(g.heavenlyChips)<budget.cost){
    return this.state('ascension','等待当前存档恢复转生预算');
   }
+  if(job.combo){
+   const run=M.execution(g,this.c),book=C.mini(g,'Wizard tower');
+   if(now<job.combo.until&&run.ascendCombo&&M.modes(g,this.c).magic&&run.click&&run.golden&&
+      !C.veil(g,run)&&book?.spellsCastTotal===job.combo.index){
+    const plan=this.spellPlan(g,run,now);
+    return this.state('ascension',plan.reason||'转生前可叠加点击狂热');
+   }
+   const reason=now>=job.combo.until?'等待爆发超时':'爆发等待结束';
+   this.log('转生前 · '+reason);
+   job={...job,combo:null};
+   this.saveAscent(g,job);
+  }
   if(job.prep.length){
    const [item,...rest]=job.prep;
    const object=g.ObjectsById?.[item.id],quantity=item.goal-object?.amount;
-   const cost=quantity>0&&object?.getSumPrice?.(quantity);
+   const cost=quantity>0&&M.ascensionPrepCost(object,quantity);
    const keep=C.reserve(g,this.c);
+   const maxCost=Number.isFinite(item.maxCost)?item.maxCost:Math.max(0,g.cookies-keep)*.01;
    if(g.buyMode!==-1&&object&&!object.locked&&!this.c.blocked.includes('b:'+object.id)&&
-      item.goal<=this.c.maxBuilding&&quantity>0&&quantity<=25&&Number.isFinite(cost)&&cost>=0&&cost<=(g.cookies-keep)*.01){
+      item.goal<=this.c.maxBuilding&&quantity>0&&quantity<=25&&Number.isFinite(cost)&&cost>=0&&
+      cost<=maxCost&&cost<=g.cookies-keep){
     const previous=object.amount;
     object.buy(quantity);
     if(object.amount>previous){
      g.WriteSave();
-     this.log('转生前补齐 '+(object.dname||object.name)+' ×'+(object.amount-previous),1);
+     const achievement=item.achievement&&object.amount>=item.goal?' · '+item.achievement:'';
+     this.log('转生前补齐 '+(object.dname||object.name)+' ×'+(object.amount-previous)+achievement,1);
     }
    }
    this.saveAscent(g,{...job,prep:rest});
@@ -507,24 +526,31 @@ class Engine{
  }
  spellPlan(g,c,now=Date.now(),track=false){
   const book=C.mini(g,'Wizard tower');
+  const job=M.modes(g,c).ascension==='cycle'?this.ascentJob(g):null;
+  if(job?.phase==='prepare'&&job.round===roundKey(g)&&job.combo){
+   const seconds=Math.max(0,(job.combo.until-now)/1000);
+   const combo=M.ascensionCombo(g,c,this.lastCast,now);
+   if(seconds>0&&combo?.index===job.combo.index&&C.cpsBuff(g)>=7&&!C.clickBuff(g)&&combo.seconds<=seconds)return combo;
+   return {holding:true,seconds,reason:seconds>0?'转生前保留魔力，等待生产狂热':'转生前爆发等待已到上限'};
+  }
   const key=[roundKey(g),book?.spellsCastTotal,c.managed.modes.magic].join('/');
   const since=this.magicHold?.key===key?this.magicHold.at:now;
   const plan=M.spellPlan(g,c,this.lastCast,now,since);
   if(track&&plan.holding&&this.magicHold?.key!==key)this.magicHold={key,at:now};
   return plan;
  }
- cast(c=this.c){
+ cast(c=this.c,now=Date.now()){
   const g=this.g,managed=M.modes(g,c).magic;
-  const {m,spell,seconds,reason,key,detail}=managed?this.spellPlan(g,c,Date.now(),true):C.castPlan(g,c,this.lastCast);
+  const {m,spell,seconds,reason,key,detail}=managed?this.spellPlan(g,c,now,true):C.castPlan(g,c,this.lastCast,now);
   if(reason)return this.state('cast',reason+(Number.isFinite(seconds)?' · 约 '+C.time(seconds):''));
   this.backup('施法前');
   if(managed){
    if(!this.managedExecution('magic',g))return this.state('cast','魔法书托管已暂停');
-   const fresh=this.spellPlan(g,M.execution(g,this.c));
+   const fresh=this.spellPlan(g,M.execution(g,this.c),now);
    if(fresh.reason||fresh.key!==key||fresh.m!==m)return this.state('cast',fresh.reason||'施法条件已变化');
   }
   const before=key==='hand of fate'?new Set(g.shimmers):null;
-  this.lastCast=Date.now();
+  this.lastCast=now;
   if(!m.castSpell(spell))return this.state('cast','游戏拒绝施法');
   this.log('施放 '+spell.name+' · 剩 '+C.fmt(m.magic)+' 魔力'+(detail?' · '+detail:''),1);
   if(before&&!C.veil(g,c)){

@@ -72,6 +72,82 @@ test('combo mode holds a predicted click buff, stacks it under Frenzy, and has a
  assert.equal(engine.spellPlan(g,run,now+31000).key,"haggler's charm");
 });
 
+test('ascension prep includes more than three milestones within one total budget and honors protection',()=>{
+ const {g,engine,tick}=setup({ascension:'cycle'}, {reserveMode:'custom',reserve:50e18},'ascension');
+ const cursor=g.Objects.Cursor;
+ cursor.getSumPrice=()=>.00012e18;
+ const buildings=[g.Objects.Farm,g.Objects.Mine,g.Objects.Temple,g.Objects.Portal];
+ for(const [i,object] of buildings.entries()){
+  object.amount=46;
+  object.tieredAchievs={1:{tier:1,dname:['农场成就','矿坑成就','神庙成就','诡异夸克'][i],won:0}};
+  const cost=[.00001e18,.00002e18,.00003e18,.526e18][i];
+  object.getSumPrice=()=>cost;
+  object.buy=quantity=>{g.Spend(cost);object.amount+=quantity;};
+ }
+ const {rows,total,budget}=M.ascensionPrep(g,engine.c);
+ assert.equal(rows.length,5);
+ assert(total<=budget);
+ assert(rows.some(row=>row.achievement.dname==='诡异夸克'));
+ const protectedPlan=M.ascensionPrep(g,C.config({...engine.c,blocked:['b:'+buildings[3].id]}));
+ assert.equal(protectedPlan.rows.length,4);
+ const limited=M.ascensionPrep({...g,cookies:50.05e18},engine.c);
+ assert(limited.total<=limited.budget&&limited.rows.length<5);
+ tick(engine);
+ assert.equal(engine.ascentJob().prep.length,4);
+ for(let i=0;i<4;i++)tick(engine);
+ assert.equal(cursor.amount,200);
+ assert.equal(buildings[3].amount,50);
+ assert(engine.logs.some(entry=>entry.text.includes('诡异夸克')));
+});
+
+function prepareAscensionCombo(config={}){
+ const result=setup({ascension:'cycle',magic:'yield',events:'idle'}, {comboWait:30,...config},'ascension');
+ const {g}=result,book=g.Objects['Wizard tower'].minigame;
+ for(let i=0;i<1000&&C.forecast(g,1)[0].effect!=='click frenzy';i++)book.spellsCastTotal++;
+ assert.equal(C.forecast(g,1)[0].effect,'click frenzy');
+ return {...result,book};
+}
+
+test('automatic ascension reserves one predicted spell, waits for the actual combo, then continues',()=>{
+ const {g,engine,book,tick,create}=prepareAscensionCombo();
+ book.castSpell=spell=>{
+  assert.equal(spell.key,'hand of fate');
+  book.spellsCastTotal++;
+  g.buffs['Click frenzy']={multClick:777};
+  return true;
+ };
+ tick(engine);
+ const {combo}=engine.ascentJob();
+ assert.equal(book.spellsCastTotal,combo.index);
+ assert.equal(g.OnAscend,0);
+ const resumed=create();
+ tick(resumed);
+ assert.deepEqual(resumed.ascentJob().combo,combo);
+ g.buffs.Frenzy={multCpS:7};
+ tick(resumed);
+ assert.equal(book.spellsCastTotal,combo.index+1);
+ tick(resumed);
+ assert.equal(g.OnAscend,0);
+ delete g.buffs['Click frenzy'];
+ tick(resumed);
+ tick(resumed);
+ assert.equal(g.OnAscend,1);
+});
+
+test('ascension proceeds on timeout and can explicitly skip holding for a combo',()=>{
+ const {g,engine,book,tick}=prepareAscensionCombo();
+ tick(engine);
+ const {combo}=engine.ascentJob();
+ engine.pulse(combo.until+1);
+ engine.pulse(combo.until+1101);
+ assert.equal(book.spellsCastTotal,combo.index);
+ assert.equal(g.OnAscend,1);
+ const immediate=prepareAscensionCombo({ascendCombo:false});
+ immediate.tick(immediate.engine);
+ immediate.tick(immediate.engine);
+ assert.equal(immediate.g.OnAscend,1);
+});
+
 test('two automatic rounds survive engine restart and buy a verified plan once',()=>{
  const {g,engine,create,tick}=setup({ascension:'cycle',events:'idle',purchase:'efficient'}, {},'ascension');
  const first=M.ascensionPlan(g,engine.c);

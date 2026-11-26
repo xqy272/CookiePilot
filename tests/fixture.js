@@ -80,6 +80,7 @@ for(const[name,m]of [['Farm',garden],['Wizard tower',grimoire],['Temple',pantheo
 g.dragonLevels=Array.from({length:28},(_,id)=>({name:'Dragon',action:'训练阶段 '+id,cost:()=>g.cookies>1000000,buy:()=>g.Spend(1000000),costStr:()=> '1 M 饼干'}));g.dragonAuras={0:{name:'No aura',dname:'无光环'},1:{name:'Breath of Milk',dname:'牛奶之息'},2:{name:'Dragon Cursor',dname:'龙之指针'}};g.UpgradeDragon=()=>{g.dragonLevels[g.dragonLevel].buy();g.dragonLevel++;};g.specialTab='dragon';g.ClickSpecialPic=()=>{g.petClicks=(g.petClicks||0)+1;};owned.add('A crumbly egg');owned.add('Pet the dragon');
 g.fullDate=g.startDate;
 g.wrinklers=Array.from({length:11},(_,id)=>({id,phase:2,hp:3,sucked:1000000*(id+1),type:id===10?1:0}));g.AchievementsById={0:{name:'Builder',dname:'建造者',won:0,desc:'拥有更多建筑。'},1:{name:'Green thumb',dname:'园艺爱好者',won:0,desc:'收获 100 株植物。'}};
+g.Achievements={'The Digital':{name:'The Digital',dname:'数字化',won:0}};
 if(stage==='early'){g.cookies=5000;g.cookiesPs=10;g.unbuffedCps=10;g.computedMouseCps=1;g.lumps=-1;g.ObjectsById.forEach((o,i)=>{o.level=0;o.locked=i>3;o.amount=i<2?10:0;});g.dragonLevel=0;owned.clear();}
 if(stage==='ascension'){
  g.fullDate=g.startDate=1700000000010;

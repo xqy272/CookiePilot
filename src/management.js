@@ -184,23 +184,41 @@ function ascensionPlan(g,c){
  if(c.protectShiny&&g.wrinklers?.some(w=>w.type===1&&w.phase>0))return{...result,reason:'检测到闪光皱纹虫，等待玩家处理'};
  return{...result,ready:true,reason:'已达 '+name+' · 可以备份并自动转生'};
 }
+function ascensionCombo(g,c,lastCast,now=Date.now()){
+ if(!c.ascendCombo||!modes(g,c).magic||!c.cast||!c.click||!c.golden)return null;
+ const forecast=C.forecast(g,1)[0];
+ if(forecast?.effect!=='click frenzy'||forecast.fail)return null;
+ const key='hand of fate';
+ const plan=C.castPlan(g,{...c,spell:key,castCondition:'mana',maxFail:100,prediction:false},lastCast,now);
+ return plan.spell?{...plan,key,index:forecast.index,detail:'转生前 · 生产狂热叠加点击狂热'}:null;
+}
+// The game quotes the rounded sum but rounds each individual purchase.
+const ascensionPrepCost=(object,quantity)=>object.getSumPrice?.(quantity)+quantity-1;
 function ascensionPrep(g,c){
- const keep=C.reserve(g,c);
- const limit=Math.max(0,g.cookies-keep)*.01;
+ const budget=Math.max(0,g.cookies-C.reserve(g,c))*.01;
  const candidates=[];
  for(const object of g.ObjectsById||[]){
   if(object.locked||c.blocked.includes('b:'+object.id))continue;
-  const milestones=Object.values(object.tieredAchievs||{})
-   .filter(achievement=>!achievement.won)
-   .map(achievement=>g.Tiers?.[achievement.tier]?.achievUnlock);
-  if(object.name==='Cursor')milestones.push(200);
-  const goal=Math.min(...milestones.filter(n=>n>object.amount&&n<=c.maxBuilding));
-  const quantity=goal-object.amount;
-  if(quantity<=0||quantity>25)continue;
-  const cost=object.getSumPrice?.(quantity);
-  if(Number.isFinite(cost)&&cost>=0&&cost<=limit)candidates.push({object,quantity,cost,goal});
+  const milestones=Object.values(object.tieredAchievs||{}).map(achievement=>({
+   achievement,goal:g.Tiers?.[achievement.tier]?.achievUnlock
+  }));
+  if(object.name==='Cursor')milestones.push({achievement:g.Achievements?.['The Digital'],goal:200});
+  const next=milestones.filter(({achievement,goal})=>achievement&&!achievement.won&&goal>object.amount&&
+   goal<=c.maxBuilding&&goal-object.amount<=25).sort((a,b)=>a.goal-b.goal)[0];
+  if(!next)continue;
+  const quantity=next.goal-object.amount,cost=ascensionPrepCost(object,quantity);
+  if(Number.isFinite(cost)&&cost>=0&&cost<=budget){
+   candidates.push({object,quantity,cost,goal:next.goal,achievement:next.achievement});
+  }
  }
- return candidates.sort((a,b)=>a.cost-b.cost).slice(0,3);
+ const rows=[];
+ let total=0;
+ for(const candidate of candidates.sort((a,b)=>a.cost-b.cost)){
+  if(total+candidate.cost>budget)break;
+  rows.push(candidate);
+  total+=candidate.cost;
+ }
+ return {rows,total,budget};
 }
 function permanentSlots(g){
  const slots=g.permanentUpgrades||[];
@@ -497,5 +515,5 @@ function seasonPlan(g,c){
 
 return{configured,modes,pending,active,owner,moduleForRule,execution,pantheonLineup,purchasePlan,spellPlan,gardenPlan,
  marketOrder,wrinklerMode,wrinklerPlan,dragonPlan,dragonDrops,growthAura,seasonPlan,
- heavenlyBudget,ascensionPlan,ascensionPrep,permanentSlots,researchPlan};
+ heavenlyBudget,ascensionPlan,ascensionCombo,ascensionPrep,ascensionPrepCost,permanentSlots,researchPlan};
 });

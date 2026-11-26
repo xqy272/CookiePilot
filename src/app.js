@@ -353,7 +353,7 @@ function ruleReport(g,c,key){
   return{label:'待收取',text:'已到安全收取时间',tone:'good'};
  }
  if(key==='cast'){
-  const cast=M.modes(g,c).magic?M.spellPlan(g,c,engine.lastCast):C.castPlan(g,c,engine.lastCast);
+  const cast=M.modes(g,c).magic?engine.spellPlan(g,c):C.castPlan(g,c,engine.lastCast);
   if(!cast.reason)return{label:'待施法',text:cast.spell.name+' · 消耗 '+F(cast.cost)+' 魔力',tone:'good'};
   const timed=Number.isFinite(cast.seconds);
   return{label:timed?(cast.reason==='等待魔力'?'等魔力':'冷却中'):'等待条件',
@@ -607,9 +607,13 @@ function nextJobs(g,c){
  };
  const managed=M.modes(g,c);
  const ascent=engine.ascentJob(g);
- if(ascent&&(g.OnAscend||g.AscendTimer||g.ReincarnateTimer)){
+ if(ascent&&managed.ascension==='cycle'&&(g.OnAscend||g.AscendTimer||g.ReincarnateTimer)){
   add('ascension','完成转生 · '+ascent.name,0,engine.states.ascension||'按顺序完成天堂升级与重开');
   return jobs;
+ }
+ if(ascent?.combo&&managed.ascension==='cycle'){
+  add('ascension','转生前等待一次爆发',Math.max(0,(ascent.combo.until-Date.now())/1000),
+   '生产狂热与点击狂热叠加，超时后继续转生');
  }
  if(engine.rebuy.length){
   add('godzamok','回购建筑 · 余 '+engine.rebuy.length+' 项',0,engine.states.godzamok||'先恢复建筑库存');
@@ -631,7 +635,7 @@ function nextJobs(g,c){
  if(c.cast){
   const cast=managed.magic?engine.spellPlan(g,c):C.castPlan(g,c,engine.lastCast);
   if(cast.spell)add('cast','施放'+C.plain(cast.spell.name),cast.seconds,'消耗 '+F(cast.cost)+' 魔力 · 保留 '+F(c.magicReserve));
-  if(cast.holding)add('cast','等待生产狂热',cast.seconds,'保留当前命运之手序列和魔力 · 显示最长等待');
+  if(cast.holding&&!ascent?.combo)add('cast','等待生产狂热',cast.seconds,'保留当前命运之手序列和魔力 · 显示最长等待');
  }
  if(c.pantheon){
   const plan=C.pantheonPlan(g,c.gods,c.swapReserve);
@@ -671,7 +675,7 @@ function nextJobs(g,c){
   const plan=M.researchPlan(g,c);
   add('research',plan.reason,plan.upgrade?0:plan.seconds,plan.upgrade?'研究托管 · 花费 '+F(plan.cost)+' 饼干':'研究倒计时');
  }
- if(managed.ascension==='cycle'){
+ if(managed.ascension==='cycle'&&!ascent){
   const plan=M.ascensionPlan(g,c);
   if(plan.ready||plan.deficit>0)add('ascension','转生 · '+plan.name,plan.ready?0:plan.seconds,plan.reason);
  }
@@ -804,7 +808,7 @@ function managedScope(id,choice,c){
  if(id==='magic')return module.scope+(choice==='combo'?'预测到点击狂热时等待生产狂热，超时后恢复日常施法。Haggler’s Charm 可推进序列，反噬时升级价格暂涨 2%。':
   '平时召唤饼干。不合适的序列可用 Haggler’s Charm 推进，反噬时升级价格暂涨 2%。');
  if(id==='research'&&choice==='pledge')return module.scope+' 长者契约后持续安抚。闪光皱纹虫或万圣节待收集时延后。';
- if(id==='ascension'&&choice==='cycle')return '筹码和最低新增声望达标后，补齐低成本成就并结算普通皱纹虫。备份后自动转生，按路线购买天堂升级，为永久栏选择小猫并重开。刷新后可接续。';
+ if(id==='ascension'&&choice==='cycle')return '筹码达标后，按总预算补齐临近成就并结算普通皱纹虫。若预测可叠加点击狂热，会按设定最多等一次。之后购买天堂升级、设置永久栏并重开。';
  return module.scope;
 }
 function managementFields(id,c){
@@ -813,7 +817,9 @@ function managementFields(id,c){
  if(id==='magic')options=field('magicReserve','保留魔力','number',{min:0})+
   field('castCooldown','施法冷却（秒）','number',{min:1,step:1})+
   field('comboWait','等待生产狂热上限（秒）','number',{min:30,max:1800,step:1});
- if(id==='ascension')options=field('ascendTarget','最低新增声望','number',{min:0});
+ if(id==='ascension')options=field('ascendTarget','最低新增声望','number',{min:0})+
+  check('ascendCombo','转生前等待一次可预测的爆发')+
+  (c.ascendCombo?field('comboWait','等待爆发上限（秒）','number',{min:30,max:1800,step:1}):'');
  if(id==='pantheon')options=field('swapReserve','保留调换次数','number',{min:0,max:3,step:1});
  if(id==='market')options=field('marketBudget','总仓位预算（可用饼干 %）','number',{min:0,max:100})+
   field('marketMinSamples','最低报价样本数','number',{min:5,max:2000,step:1})+
@@ -1117,11 +1123,17 @@ function prestigePlanning(g,c){
  const price=chosen?C.num(chosen.getPrice?.(),C.num(chosen.basePrice)):0;
  const missing=Object.values(g.AchievementsById||{}).filter(a=>a&&!a.won&&a.pool!=='shadow').slice(0,35);
  const job=engine.ascentJob(g),plan=M.ascensionPlan(g,c),mode=M.modes(g,c).ascension;
- const route=job?facts([['正在执行',job.name],['当前阶段',({prepare:'转生前准备',ascending:'进入天堂',buying:'购买天堂升级',restarting:'开始下一轮'})[job.phase]]]):
+ const prep=!job&&g.buyMode!==-1?M.ascensionPrep(g,c):null;
+ const route=job?facts([['正在执行',job.name],['当前阶段',({prepare:'转生前准备',ascending:'进入天堂',buying:'购买天堂升级',restarting:'开始下一轮'})[job.phase]],
+  ...(engine.states.ascension?[['状态',engine.states.ascension]]:[]),
+  ...(job.prep.length?[['待补齐',job.prep.map(item=>item.achievement||g.ObjectsById?.[item.id]?.dname).filter(Boolean).join('、')]]:[]),
+  ...(job.combo?[['爆发等待上限',T(Math.max(0,(job.combo.until-Date.now())/1000))]]:[])]):
   facts([['下一套目标',plan.name||'等待规划'],['状态',plan.reason],
    ...(plan.cost!=null?[['整套成本',F(plan.cost,0)+' 筹码'],['本轮应增加',F(plan.target,0)+' 声望']]:[]),
    ...(plan.deficit>0&&Number.isFinite(plan.seconds)?[['按无增益产量估算',T(plan.seconds)]]:[]),
-   ...(plan.rows?.length?[['采购顺序',plan.rows.map(({upgrade})=>upgrade.dname||upgrade.name).join('、')]]:[])]);
+   ...(plan.rows?.length?[['采购顺序',plan.rows.map(({upgrade})=>upgrade.dname||upgrade.name).join('、')]]:[]),
+   ...(prep?.rows.length?[['预计转生前成就',prep.rows.map(({achievement})=>achievement.dname||achievement.name).join('、')],
+    ['成就准备费用上限',F(prep.total)+' / '+F(prep.budget)+' 饼干']]:[])]);
  return block('自动转生路线',route+btn(mode==='cycle'?'管理自动转生':'设置自动转生','configure-ascension','','primary'))+
  block('声望与天堂升级预算',`<div class="fields">
   ${field('ascendTarget','目标新增声望','number',{min:0})}

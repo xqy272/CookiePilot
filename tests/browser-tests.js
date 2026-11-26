@@ -281,7 +281,14 @@ button.onclick=async()=>{button.disabled=true;out.textContent='正在运行独�
   const run=window.Game=makePilotFixture('ascension');
   e.setPaused(true);
   try{
-   e.set({managed:{saveId:0,modes:{}},lumpManaged:false,lumpLevel:false});
+   e.set({managed:{saveId:0,modes:{}},lumpManaged:false,lumpLevel:false,ascendCombo:true});
+   click('[data-page="planning"]');
+   click('[data-action="plan-tab"][data-arg="prestige"]');
+   assert(root().getElementById('main').textContent.includes('数字化'),'转生规划未列出可补的成就');
+   click('[data-action="configure-ascension"]');
+   click('details[data-state="manage-settings"] summary');
+   click('input[data-key="ascendCombo"]');
+   assert(!e.c.ascendCombo,'等待爆发设置未生效');
    page('overview');
    click('[data-action="navigate"][data-arg="management"]');
    click('[data-action="management-growth"]');
